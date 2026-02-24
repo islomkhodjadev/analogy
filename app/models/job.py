@@ -44,6 +44,9 @@ class Job(Base):
     error_message = Column(Text, nullable=True)
     miro_board_id = Column(String(255), nullable=True)
     miro_board_url = Column(String(2048), nullable=True)
+    miro_export_status = Column(String(20), nullable=True)   # pending/running/completed/failed
+    miro_export_error = Column(Text, nullable=True)
+    miro_celery_task_id = Column(String(255), nullable=True)
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)

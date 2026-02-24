@@ -23,6 +23,8 @@ class JobResponse(BaseModel):
     total_themes: int
     error_message: str | None
     miro_board_url: str | None
+    miro_export_status: str | None = None
+    miro_export_error: str | None = None
     profile_id: str | None = None
     started_at: datetime | None
     completed_at: datetime | None

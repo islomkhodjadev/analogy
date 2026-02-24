@@ -29,6 +29,8 @@ def _job_to_response(job: Job) -> JobResponse:
         total_themes=job.total_themes or 0,
         error_message=job.error_message,
         miro_board_url=job.miro_board_url,
+        miro_export_status=job.miro_export_status,
+        miro_export_error=job.miro_export_error,
         profile_id=str(job.profile_id) if job.profile_id else None,
         started_at=job.started_at,
         completed_at=job.completed_at,
@@ -169,7 +171,7 @@ def delete_job(
     return {"detail": "Job deleted"}
 
 
-@router.post("/{job_id}/export/miro", response_model=MiroExportResponse)
+@router.post("/{job_id}/export/miro", response_model=MiroExportResponse, status_code=status.HTTP_202_ACCEPTED)
 def export_to_miro(
     job_id: UUID,
     body: MiroExportRequest | None = None,
@@ -192,16 +194,10 @@ def export_to_miro(
             detail="No Miro access token configured. Set one via PATCH /auth/me",
         )
 
-    screenshots = (
-        db.query(Screenshot)
-        .filter(Screenshot.job_id == job_id)
-        .order_by(Screenshot.order_index)
-        .all()
-    )
-    if not screenshots:
+    if job.miro_export_status == "running":
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Job has no screenshots to export",
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A Miro export is already running for this job",
         )
 
     prompt = body.prompt if body else None
@@ -214,60 +210,37 @@ def export_to_miro(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
                 detail="No OpenAI API key configured. Set one via PATCH /auth/me",
             )
+    else:
+        openai_key = None
 
     board_name = (
         body.board_name
         if body and body.board_name
         else urlparse(job.url).netloc or "Auto Screen Export"
     )
+    board_id = body.board_id if body else None
 
-    from app.services.miro import MiroExporter, MiroExportError
-    from app.services.board_planner import BoardPlanner, BoardPlannerError
+    # Mark as pending and dispatch background task
+    job.miro_export_status = "pending"
+    job.miro_export_error = None
+    db.commit()
 
-    exporter = MiroExporter(access_token=current_user.miro_access_token)
-    try:
-        existing_board_id = body.board_id if body else None
-
-        if use_ai:
-            planner = BoardPlanner(openai_api_key=openai_key, model="gpt-4.1")
-            plan = planner.generate_plan(
-                prompt=prompt.strip(),
-                screenshots=screenshots,
-                site_url=job.url,
-            )
-            if not (body and body.board_name):
-                board_name = plan.board_title
-            board_id, board_url = exporter.export_from_plan(
-                plan,
-                screenshots,
-                existing_board_id,
-            )
-        else:
-            board_id, board_url = exporter.export_job(
-                board_name,
-                screenshots,
-                existing_board_id,
-            )
-    except MiroExportError as e:
-        raise HTTPException(status_code=502, detail=str(e))
-    except BoardPlannerError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail="Export failed: {}".format(str(e)[:500]),
-        )
-    finally:
-        exporter.close()
-
-    job.miro_board_id = board_id
-    job.miro_board_url = board_url
+    from app.worker.tasks import run_miro_export
+    task = run_miro_export.delay(
+        str(job.id),
+        current_user.miro_access_token,
+        openai_key,
+        board_name,
+        board_id,
+        prompt,
+    )
+    job.miro_celery_task_id = task.id
     db.commit()
 
     return MiroExportResponse(
-        board_id=board_id,
-        board_url=board_url,
-        message="Successfully exported {} screenshots to Miro board".format(
-            len(screenshots)
-        ),
+        job_id=str(job.id),
+        miro_export_status="pending",
+        board_id=job.miro_board_id,
+        board_url=job.miro_board_url,
+        message="Miro export queued. Poll GET /jobs/{} to check miro_export_status.".format(job_id),
     )

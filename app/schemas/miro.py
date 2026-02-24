@@ -8,6 +8,9 @@ class MiroExportRequest(BaseModel):
 
 
 class MiroExportResponse(BaseModel):
-    board_id: str
-    board_url: str
+    job_id: str
+    miro_export_status: str          # pending / running / completed / failed
+    board_id: str | None = None
+    board_url: str | None = None
+    error: str | None = None
     message: str

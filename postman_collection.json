@@ -7,7 +7,7 @@
 	"variable": [
 		{
 			"key": "base_url",
-			"value": "http://localhost:8000",
+			"value": "https://analogy.postbaby.uz",
 			"type": "string"
 		},
 		{
@@ -217,14 +217,14 @@
 						"header": [{ "key": "Content-Type", "value": "application/json" }],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"url\": \"https://example.com\",\n    \"depth\": 3,\n    \"model\": \"gpt-4-turbo\",\n    \"browser_engine\": \"playwright\",\n    \"target_login\": null,\n    \"target_password\": null,\n    \"profile_id\": null\n}"
+							"raw": "{\n    \"url\": \"https://example.com\",\n    \"depth\": 3,\n    \"model\": \"gpt-4.1\",\n    \"browser_engine\": \"playwright\",\n    \"target_login\": null,\n    \"target_password\": null,\n    \"profile_id\": null\n}"
 						},
 						"url": {
 							"raw": "{{base_url}}/jobs",
 							"host": ["{{base_url}}"],
 							"path": ["jobs"]
 						},
-						"description": "Create a new screenshot job. Depth 1-10 controls how many pages to capture (depth * 5, max 50). Set browser_engine to 'playwright' (default) or 'selenium'. Set profile_id to reuse saved login state from a Browser Profile. Job ID is auto-saved."
+						"description": "Create a new screenshot job. Depth 1-10 controls how many pages to capture. Set browser_engine to 'playwright' (default) or 'selenium'. Job ID is auto-saved."
 					},
 					"response": []
 				},
@@ -249,14 +249,14 @@
 						"header": [{ "key": "Content-Type", "value": "application/json" }],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"url\": \"https://example.com/login\",\n    \"depth\": 5,\n    \"model\": \"gpt-4-turbo\",\n    \"browser_engine\": \"playwright\",\n    \"target_login\": \"admin@example.com\",\n    \"target_password\": \"secretpassword\",\n    \"profile_id\": null\n}"
+							"raw": "{\n    \"url\": \"https://example.com/login\",\n    \"depth\": 5,\n    \"model\": \"gpt-4.1\",\n    \"browser_engine\": \"playwright\",\n    \"target_login\": \"admin@example.com\",\n    \"target_password\": \"secretpassword\",\n    \"profile_id\": null\n}"
 						},
 						"url": {
 							"raw": "{{base_url}}/jobs",
 							"host": ["{{base_url}}"],
 							"path": ["jobs"]
 						},
-						"description": "Create a screenshot job for a site that requires authentication. After successful login, a Browser Profile is auto-created to persist cookies. Set profile_id to skip re-login on subsequent jobs."
+						"description": "Create a screenshot job for a site that requires authentication. After successful login, a Browser Profile is auto-created to persist cookies."
 					},
 					"response": []
 				},
@@ -281,14 +281,14 @@
 						"header": [{ "key": "Content-Type", "value": "application/json" }],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"url\": \"https://example.com\",\n    \"depth\": 3,\n    \"model\": \"gpt-4-turbo\",\n    \"browser_engine\": \"selenium\",\n    \"target_login\": null,\n    \"target_password\": null,\n    \"profile_id\": null\n}"
+							"raw": "{\n    \"url\": \"https://example.com\",\n    \"depth\": 3,\n    \"model\": \"gpt-4.1\",\n    \"browser_engine\": \"selenium\",\n    \"target_login\": null,\n    \"target_password\": null,\n    \"profile_id\": null\n}"
 						},
 						"url": {
 							"raw": "{{base_url}}/jobs",
 							"host": ["{{base_url}}"],
 							"path": ["jobs"]
 						},
-						"description": "Create a screenshot job using the Selenium/undetected-chromedriver engine instead of the default Playwright. Useful as a fallback when Playwright has issues with certain sites."
+						"description": "Create a screenshot job using the Selenium/undetected-chromedriver engine instead of the default Playwright."
 					},
 					"response": []
 				},
@@ -307,12 +307,12 @@
 								{ "key": "status", "value": "completed", "disabled": true }
 							]
 						},
-						"description": "List all jobs for the current user. Enable the 'status' param to filter."
+						"description": "List all jobs for the current user. Enable the 'status' param to filter by pending/running/completed/failed."
 					},
 					"response": []
 				},
 				{
-					"name": "Get Job",
+					"name": "Get Job (poll status)",
 					"request": {
 						"method": "GET",
 						"header": [],
@@ -321,7 +321,7 @@
 							"host": ["{{base_url}}"],
 							"path": ["jobs", "{{job_id}}"]
 						},
-						"description": "Get details of a specific job including status, screenshot count, and miro_board_url."
+						"description": "Poll this endpoint to check job progress.\n\nJob fields to watch:\n- status: pending → running → completed / failed\n- total_screenshots: number captured so far\n- error_message: set on failure\n\nMiro export fields (after calling export/miro):\n- miro_export_status: pending → running → completed / failed\n- miro_board_url: set when miro_export_status = completed\n- miro_export_error: set when miro_export_status = failed"
 					},
 					"response": []
 				},
@@ -341,6 +341,25 @@
 				},
 				{
 					"name": "Export to Miro (fixed layout)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 202) {",
+									"    var jsonData = pm.response.json();",
+									"    pm.test('Export queued', function () {",
+									"        pm.expect(jsonData.miro_export_status).to.eql('pending');",
+									"    });",
+									"    pm.test('Poll instruction present', function () {",
+									"        pm.expect(jsonData.message).to.include('Poll');",
+									"    });",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
 					"request": {
 						"method": "POST",
 						"header": [{ "key": "Content-Type", "value": "application/json" }],
@@ -353,12 +372,28 @@
 							"host": ["{{base_url}}"],
 							"path": ["jobs", "{{job_id}}", "export", "miro"]
 						},
-						"description": "Export with fixed horizontal layout. Set board_name to override default. Set board_id to use existing board. Requires miro_access_token via PATCH /auth/me."
+						"description": "Queue a Miro export with fixed grid layout. Returns 202 immediately.\n\nPoll GET /jobs/{{job_id}} and watch miro_export_status:\n  pending → running → completed (miro_board_url is set) / failed (miro_export_error is set)\n\nRequires miro_access_token set via PATCH /auth/me."
 					},
 					"response": []
 				},
 				{
 					"name": "Export to Miro (AI prompt)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 202) {",
+									"    var jsonData = pm.response.json();",
+									"    pm.test('Export queued', function () {",
+									"        pm.expect(jsonData.miro_export_status).to.eql('pending');",
+									"    });",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
 					"request": {
 						"method": "POST",
 						"header": [{ "key": "Content-Type", "value": "application/json" }],
@@ -371,7 +406,7 @@
 							"host": ["{{base_url}}"],
 							"path": ["jobs", "{{job_id}}", "export", "miro"]
 						},
-						"description": "AI-powered export: provide a prompt describing what kind of board to generate. The AI analyzes screenshots and creates a dynamic layout with frames, shapes, sticky notes, and connectors. Requires both miro_access_token and openai_api_key."
+						"description": "Queue an AI-powered Miro export. Returns 202 immediately.\n\nThe AI analyzes screenshots and creates a dynamic layout with frames, shapes, sticky notes, and connectors based on the prompt.\n\nPoll GET /jobs/{{job_id}} and watch miro_export_status:\n  pending → running → completed (miro_board_url is set) / failed (miro_export_error is set)\n\nRequires both miro_access_token and openai_api_key."
 					},
 					"response": []
 				}
@@ -379,7 +414,7 @@
 		},
 		{
 			"name": "Browser Profiles",
-			"description": "Manage browser profiles that persist login state (cookies, localStorage) across jobs. Inspired by Browser Use Cloud's Profile concept.",
+			"description": "Manage browser profiles that persist login state (cookies, localStorage) across jobs.",
 			"item": [
 				{
 					"name": "List Profiles",
@@ -391,7 +426,7 @@
 							"host": ["{{base_url}}"],
 							"path": ["profiles"]
 						},
-						"description": "List all browser profiles for the current user. Shows domain, name, whether cookies/localStorage are saved, and last used timestamp."
+						"description": "List all browser profiles for the current user."
 					},
 					"response": []
 				},
@@ -451,14 +486,14 @@
 						"header": [{ "key": "Content-Type", "value": "application/json" }],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"url\": \"https://example.com\",\n    \"depth\": 3,\n    \"model\": \"gpt-4-turbo\",\n    \"browser_engine\": \"playwright\",\n    \"profile_id\": \"{{profile_id}}\"\n}"
+							"raw": "{\n    \"url\": \"https://example.com\",\n    \"depth\": 3,\n    \"model\": \"gpt-4.1\",\n    \"browser_engine\": \"playwright\",\n    \"profile_id\": \"{{profile_id}}\"\n}"
 						},
 						"url": {
 							"raw": "{{base_url}}/jobs",
 							"host": ["{{base_url}}"],
 							"path": ["jobs"]
 						},
-						"description": "Create a job using a saved Browser Profile. The browser will restore cookies and localStorage from the profile, skipping login. Credentials stored in the profile are used as fallback."
+						"description": "Create a job using a saved Browser Profile. The browser will restore cookies and localStorage from the profile, skipping the login step."
 					},
 					"response": []
 				},
@@ -472,7 +507,7 @@
 							"host": ["{{base_url}}"],
 							"path": ["profiles", "{{profile_id}}"]
 						},
-						"description": "Get details of a specific browser profile including has_cookies, has_local_storage status, and last_used_at."
+						"description": "Get details of a specific browser profile."
 					},
 					"response": []
 				},
@@ -504,7 +539,7 @@
 							"host": ["{{base_url}}"],
 							"path": ["profiles", "{{profile_id}}", "clear-state"]
 						},
-						"description": "Clear saved cookies and localStorage from a profile, forcing re-login on the next job. Useful when the session has expired or credentials changed."
+						"description": "Clear saved cookies and localStorage from a profile, forcing re-login on the next job."
 					},
 					"response": []
 				},
@@ -518,7 +553,7 @@
 							"host": ["{{base_url}}"],
 							"path": ["profiles", "{{profile_id}}"]
 						},
-						"description": "Permanently delete a browser profile. Jobs that referenced this profile will have their profile_id set to null."
+						"description": "Permanently delete a browser profile."
 					},
 					"response": []
 				}
