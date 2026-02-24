@@ -1,0 +1,111 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-autoscreen}
+      POSTGRES_USER: ${POSTGRES_USER:-autoscreen}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    # No host port — only reachable inside the Docker network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-autoscreen}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    # No host port — only reachable inside the Docker network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # No host port — nginx proxies to this
+    expose:
+      - "8000"
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=redis://redis:6379/0
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - DEFAULT_OPENAI_API_KEY=${DEFAULT_OPENAI_API_KEY}
+      - DEBUG=false
+    volumes:
+      - screenshots_data:/app/static/screenshots
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2"
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=redis://redis:6379/0
+      - DEFAULT_OPENAI_API_KEY=${DEFAULT_OPENAI_API_KEY}
+      - CHROME_BIN=/usr/bin/google-chrome-stable
+      - CHROMEDRIVER_PATH=/usr/bin/chromedriver
+    volumes:
+      - screenshots_data:/app/static/screenshots
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      celery -A app.worker.celery_app worker
+        --loglevel=info
+        --concurrency=1
+        --max-tasks-per-child=5
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - certbot_www:/var/www/certbot:ro
+      - certbot_certs:/etc/letsencrypt:ro
+      - screenshots_data:/app/static/screenshots:ro
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  certbot:
+    image: certbot/certbot:latest
+    volumes:
+      - certbot_www:/var/www/certbot
+      - certbot_certs:/etc/letsencrypt
+    # Run manually: docker compose run --rm certbot certonly ...
+    # Auto-renewal is handled by the deploy script cron entry
+    entrypoint: /bin/sh -c "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet; sleep 12h & wait $${!}; done"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  screenshots_data:
+  certbot_www:
+  certbot_certs:

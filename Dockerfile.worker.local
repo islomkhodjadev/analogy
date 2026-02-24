@@ -1,0 +1,24 @@
+FROM python:3.12-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    chromium \
+    chromium-driver \
+    fonts-liberation \
+    libnss3 \
+    libxss1 \
+    xdg-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV DBUS_SESSION_BUS_ADDRESS=/dev/null
+
+WORKDIR /app
+ENV PYTHONPATH=/app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install Playwright browsers (required for Playwright engine)
+RUN playwright install --with-deps chromium chromium-headless-shell
+
+COPY app/ app/
+COPY core/ core/

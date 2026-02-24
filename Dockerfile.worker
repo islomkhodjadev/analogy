@@ -1,0 +1,49 @@
+FROM python:3.12-slim
+
+# Install system dependencies for both Selenium and Playwright
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    wget \
+    gnupg2 \
+    ca-certificates \
+    fonts-liberation \
+    libnss3 \
+    libxss1 \
+    xdg-utils \
+    unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+ENV PYTHONPATH=/app
+
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install Playwright browsers and their system dependencies
+RUN playwright install --with-deps chromium chromium-headless-shell
+
+# Install Chrome + Chromedriver for Selenium engine
+RUN wget -q -O /tmp/google-chrome.gpg https://dl.google.com/linux/linux_signing_key.pub \
+    && gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg /tmp/google-chrome.gpg \
+    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" \
+    > /etc/apt/sources.list.d/google-chrome.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends google-chrome-stable \
+    && rm -rf /var/lib/apt/lists/* /tmp/google-chrome.gpg \
+    || echo "Chrome install skipped (non-amd64 arch)"
+
+# Install matching chromedriver (may fail on non-amd64 — that's OK, Playwright is default)
+RUN CHROME_VERSION=$(google-chrome-stable --version 2>/dev/null | grep -oP '\d+\.\d+\.\d+' || echo '') \
+    && if [ -n "$CHROME_VERSION" ]; then \
+    wget -q "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}.0/linux64/chromedriver-linux64.zip" \
+    -O /tmp/chromedriver.zip \
+    && unzip /tmp/chromedriver.zip -d /tmp/ \
+    && mv /tmp/chromedriver-linux64/chromedriver /usr/bin/chromedriver \
+    && chmod +x /usr/bin/chromedriver \
+    && rm -rf /tmp/chromedriver*; \
+    fi
+
+ENV DBUS_SESSION_BUS_ADDRESS=/dev/null
+
+COPY app/ app/
+COPY core/ core/

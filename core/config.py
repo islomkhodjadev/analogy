@@ -1,0 +1,61 @@
+import os
+import logging
+from dataclasses import dataclass, field
+
+# ── Constants ──────────────────────────────────────────
+DEFAULT_DEPTH = 3
+MAX_DEPTH = 10
+DEFAULT_MODEL = "gpt-4-turbo"
+SCREENSHOT_FORMAT = "png"
+OUTPUT_DIR_NAME = "auto_screen_output"
+REQUEST_TIMEOUT = 30
+OPENAI_TIMEOUT = 60
+CHROME_WINDOW_WIDTH = 1920
+CHROME_WINDOW_HEIGHT = 1080
+
+
+@dataclass
+class AppConfig:
+    url: str
+    depth: int = DEFAULT_DEPTH
+    output_dir: str = ""
+    openai_api_key: str = ""
+    model: str = DEFAULT_MODEL
+    login: str = ""
+    password: str = ""
+    browser_engine: str = "playwright"  # "playwright" or "selenium"
+    headless: bool = True
+    verbose: bool = False
+    # Profile persistence (Browser Use Cloud pattern)
+    profile_cookies_json: str = ""  # JSON list of cookies to restore
+    profile_local_storage_json: str = ""  # JSON dict of localStorage to restore
+    profile_session_storage_json: str = ""
+    save_profile_callback: object = (
+        None  # callable(cookies_json, local_storage_json, session_storage_json)
+    )
+
+    def __post_init__(self):
+        if not self.openai_api_key:
+            raise ValueError("OpenAI API key is required")
+        if self.depth < 1 or self.depth > MAX_DEPTH:
+            raise ValueError("Depth must be between 1 and {}".format(MAX_DEPTH))
+
+    @property
+    def max_pages(self):
+        return min(self.depth * 5, 50)
+
+    @property
+    def max_plan_pages(self):
+        return min(self.depth * 4, 30)
+
+    @property
+    def max_pages_per_theme(self):
+        return max(2, self.depth)
+
+    @property
+    def max_ui_clicks_per_page(self):
+        return min(max(self.depth - 1, 0), 3)
+
+    @property
+    def max_discover_pages(self):
+        return 0 if self.depth == 1 else min(self.depth * 3, 25)

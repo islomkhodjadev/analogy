@@ -1,0 +1,600 @@
+{
+	"info": {
+		"name": "Auto Screen API",
+		"description": "Full API collection for Auto Screen - AI-powered website screenshot service with Miro export",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:8000",
+			"type": "string"
+		},
+		{
+			"key": "access_token",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "job_id",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "screenshot_id",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "profile_id",
+			"value": "",
+			"type": "string"
+		}
+	],
+	"auth": {
+		"type": "bearer",
+		"bearer": [
+			{
+				"key": "token",
+				"value": "{{access_token}}",
+				"type": "string"
+			}
+		]
+	},
+	"item": [
+		{
+			"name": "Health",
+			"item": [
+				{
+					"name": "Health Check",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"auth": { "type": "noauth" },
+						"url": {
+							"raw": "{{base_url}}/health",
+							"host": ["{{base_url}}"],
+							"path": ["health"]
+						},
+						"description": "Check if the API is running"
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Auth",
+			"item": [
+				{
+					"name": "Register",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    var jsonData = pm.response.json();",
+									"    pm.collectionVariables.set('access_token', jsonData.access_token);",
+									"    pm.test('Token saved', function () {",
+									"        pm.expect(jsonData.access_token).to.be.a('string');",
+									"    });",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"auth": { "type": "noauth" },
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"email\": \"user@example.com\",\n    \"password\": \"password123\",\n    \"openai_api_key\": \"sk-your-openai-key-here\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/register",
+							"host": ["{{base_url}}"],
+							"path": ["auth", "register"]
+						},
+						"description": "Register a new user. Token is auto-saved to collection variables."
+					},
+					"response": []
+				},
+				{
+					"name": "Login",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    var jsonData = pm.response.json();",
+									"    pm.collectionVariables.set('access_token', jsonData.access_token);",
+									"    pm.test('Token saved', function () {",
+									"        pm.expect(jsonData.access_token).to.be.a('string');",
+									"    });",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"auth": { "type": "noauth" },
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"email\": \"user@example.com\",\n    \"password\": \"password123\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/login",
+							"host": ["{{base_url}}"],
+							"path": ["auth", "login"]
+						},
+						"description": "Login and get JWT token. Token is auto-saved to collection variables."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Current User",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/auth/me",
+							"host": ["{{base_url}}"],
+							"path": ["auth", "me"]
+						},
+						"description": "Get the currently authenticated user's profile. Shows has_openai_key and has_miro_token."
+					},
+					"response": []
+				},
+				{
+					"name": "Update OpenAI Key",
+					"request": {
+						"method": "PATCH",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"openai_api_key\": \"sk-your-new-openai-key-here\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/me",
+							"host": ["{{base_url}}"],
+							"path": ["auth", "me"]
+						},
+						"description": "Update the user's OpenAI API key"
+					},
+					"response": []
+				},
+				{
+					"name": "Set Miro Access Token",
+					"request": {
+						"method": "PATCH",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"miro_access_token\": \"your-miro-access-token-here\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/me",
+							"host": ["{{base_url}}"],
+							"path": ["auth", "me"]
+						},
+						"description": "Set or update the user's Miro access token for board export. Get your token from https://miro.com/app/settings/user-profile/apps"
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Jobs",
+			"item": [
+				{
+					"name": "Create Job",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    var jsonData = pm.response.json();",
+									"    pm.collectionVariables.set('job_id', jsonData.id);",
+									"    pm.test('Job ID saved', function () {",
+									"        pm.expect(jsonData.id).to.be.a('string');",
+									"        pm.expect(jsonData.status).to.eql('pending');",
+									"    });",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"url\": \"https://example.com\",\n    \"depth\": 3,\n    \"model\": \"gpt-4-turbo\",\n    \"browser_engine\": \"playwright\",\n    \"target_login\": null,\n    \"target_password\": null,\n    \"profile_id\": null\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/jobs",
+							"host": ["{{base_url}}"],
+							"path": ["jobs"]
+						},
+						"description": "Create a new screenshot job. Depth 1-10 controls how many pages to capture (depth * 5, max 50). Set browser_engine to 'playwright' (default) or 'selenium'. Set profile_id to reuse saved login state from a Browser Profile. Job ID is auto-saved."
+					},
+					"response": []
+				},
+				{
+					"name": "Create Job (with login)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    var jsonData = pm.response.json();",
+									"    pm.collectionVariables.set('job_id', jsonData.id);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"url\": \"https://example.com/login\",\n    \"depth\": 5,\n    \"model\": \"gpt-4-turbo\",\n    \"browser_engine\": \"playwright\",\n    \"target_login\": \"admin@example.com\",\n    \"target_password\": \"secretpassword\",\n    \"profile_id\": null\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/jobs",
+							"host": ["{{base_url}}"],
+							"path": ["jobs"]
+						},
+						"description": "Create a screenshot job for a site that requires authentication. After successful login, a Browser Profile is auto-created to persist cookies. Set profile_id to skip re-login on subsequent jobs."
+					},
+					"response": []
+				},
+				{
+					"name": "Create Job (Selenium)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    var jsonData = pm.response.json();",
+									"    pm.collectionVariables.set('job_id', jsonData.id);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"url\": \"https://example.com\",\n    \"depth\": 3,\n    \"model\": \"gpt-4-turbo\",\n    \"browser_engine\": \"selenium\",\n    \"target_login\": null,\n    \"target_password\": null,\n    \"profile_id\": null\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/jobs",
+							"host": ["{{base_url}}"],
+							"path": ["jobs"]
+						},
+						"description": "Create a screenshot job using the Selenium/undetected-chromedriver engine instead of the default Playwright. Useful as a fallback when Playwright has issues with certain sites."
+					},
+					"response": []
+				},
+				{
+					"name": "List Jobs",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/jobs?page=1&per_page=20",
+							"host": ["{{base_url}}"],
+							"path": ["jobs"],
+							"query": [
+								{ "key": "page", "value": "1" },
+								{ "key": "per_page", "value": "20" },
+								{ "key": "status", "value": "completed", "disabled": true }
+							]
+						},
+						"description": "List all jobs for the current user. Enable the 'status' param to filter."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Job",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/jobs/{{job_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["jobs", "{{job_id}}"]
+						},
+						"description": "Get details of a specific job including status, screenshot count, and miro_board_url."
+					},
+					"response": []
+				},
+				{
+					"name": "Delete Job",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/jobs/{{job_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["jobs", "{{job_id}}"]
+						},
+						"description": "Delete a job and all its screenshots. Also revokes the Celery task if still running."
+					},
+					"response": []
+				},
+				{
+					"name": "Export to Miro (fixed layout)",
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"board_name\": null,\n    \"board_id\": null\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/jobs/{{job_id}}/export/miro",
+							"host": ["{{base_url}}"],
+							"path": ["jobs", "{{job_id}}", "export", "miro"]
+						},
+						"description": "Export with fixed horizontal layout. Set board_name to override default. Set board_id to use existing board. Requires miro_access_token via PATCH /auth/me."
+					},
+					"response": []
+				},
+				{
+					"name": "Export to Miro (AI prompt)",
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"board_id\": null,\n    \"prompt\": \"Create a mindmap showing the site structure. Group screenshots by theme into frames. Add sticky notes with observations about UX patterns. Connect pages showing the user navigation flow. Make it useful for a project manager planning to rebuild this website.\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/jobs/{{job_id}}/export/miro",
+							"host": ["{{base_url}}"],
+							"path": ["jobs", "{{job_id}}", "export", "miro"]
+						},
+						"description": "AI-powered export: provide a prompt describing what kind of board to generate. The AI analyzes screenshots and creates a dynamic layout with frames, shapes, sticky notes, and connectors. Requires both miro_access_token and openai_api_key."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Browser Profiles",
+			"description": "Manage browser profiles that persist login state (cookies, localStorage) across jobs. Inspired by Browser Use Cloud's Profile concept.",
+			"item": [
+				{
+					"name": "List Profiles",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/profiles",
+							"host": ["{{base_url}}"],
+							"path": ["profiles"]
+						},
+						"description": "List all browser profiles for the current user. Shows domain, name, whether cookies/localStorage are saved, and last used timestamp."
+					},
+					"response": []
+				},
+				{
+					"name": "Create Profile",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    var jsonData = pm.response.json();",
+									"    pm.collectionVariables.set('profile_id', jsonData.id);",
+									"    pm.test('Profile ID saved', function () {",
+									"        pm.expect(jsonData.id).to.be.a('string');",
+									"    });",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"domain\": \"example.com\",\n    \"name\": \"My Example Profile\",\n    \"login_email\": \"admin@example.com\",\n    \"login_password\": \"secretpassword\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/profiles",
+							"host": ["{{base_url}}"],
+							"path": ["profiles"]
+						},
+						"description": "Create a browser profile for a domain. Cookies and localStorage will be populated automatically after a job with this profile completes a successful login. Profile ID is auto-saved."
+					},
+					"response": []
+				},
+				{
+					"name": "Create Job (with Profile)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    var jsonData = pm.response.json();",
+									"    pm.collectionVariables.set('job_id', jsonData.id);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"url\": \"https://example.com\",\n    \"depth\": 3,\n    \"model\": \"gpt-4-turbo\",\n    \"browser_engine\": \"playwright\",\n    \"profile_id\": \"{{profile_id}}\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/jobs",
+							"host": ["{{base_url}}"],
+							"path": ["jobs"]
+						},
+						"description": "Create a job using a saved Browser Profile. The browser will restore cookies and localStorage from the profile, skipping login. Credentials stored in the profile are used as fallback."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Profile",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/profiles/{{profile_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["profiles", "{{profile_id}}"]
+						},
+						"description": "Get details of a specific browser profile including has_cookies, has_local_storage status, and last_used_at."
+					},
+					"response": []
+				},
+				{
+					"name": "Update Profile",
+					"request": {
+						"method": "PATCH",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"name\": \"Updated Profile Name\",\n    \"login_email\": \"newemail@example.com\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/profiles/{{profile_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["profiles", "{{profile_id}}"]
+						},
+						"description": "Update profile name, credentials, or active status."
+					},
+					"response": []
+				},
+				{
+					"name": "Clear Profile State",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/profiles/{{profile_id}}/clear-state",
+							"host": ["{{base_url}}"],
+							"path": ["profiles", "{{profile_id}}", "clear-state"]
+						},
+						"description": "Clear saved cookies and localStorage from a profile, forcing re-login on the next job. Useful when the session has expired or credentials changed."
+					},
+					"response": []
+				},
+				{
+					"name": "Delete Profile",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/profiles/{{profile_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["profiles", "{{profile_id}}"]
+						},
+						"description": "Permanently delete a browser profile. Jobs that referenced this profile will have their profile_id set to null."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Screenshots",
+			"item": [
+				{
+					"name": "List Screenshots for Job",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    var jsonData = pm.response.json();",
+									"    if (jsonData.screenshots && jsonData.screenshots.length > 0) {",
+									"        pm.collectionVariables.set('screenshot_id', jsonData.screenshots[0].id);",
+									"        pm.test('Screenshot ID saved', function () {",
+									"            pm.expect(jsonData.screenshots[0].id).to.be.a('string');",
+									"        });",
+									"    }",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/jobs/{{job_id}}/screenshots",
+							"host": ["{{base_url}}"],
+							"path": ["jobs", "{{job_id}}", "screenshots"],
+							"query": [
+								{ "key": "theme", "value": "homepage", "disabled": true }
+							]
+						},
+						"description": "List all screenshots for a job. Enable 'theme' to filter. First screenshot ID is auto-saved."
+					},
+					"response": []
+				},
+				{
+					"name": "List Screenshots by Theme",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/jobs/{{job_id}}/screenshots?theme=homepage",
+							"host": ["{{base_url}}"],
+							"path": ["jobs", "{{job_id}}", "screenshots"],
+							"query": [
+								{ "key": "theme", "value": "homepage" }
+							]
+						},
+						"description": "List screenshots filtered by a specific theme."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Screenshot",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/screenshots/{{screenshot_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["screenshots", "{{screenshot_id}}"]
+						},
+						"description": "Get details of a specific screenshot including file_url, description, theme, and title."
+					},
+					"response": []
+				}
+			]
+		}
+	]
+}

@@ -1,0 +1,26 @@
+# ── Use this config BEFORE the SSL cert exists (first-time setup only) ────────
+# Steps:
+#   1. cp nginx/conf.d/app.conf.http-only nginx/conf.d/app.conf
+#   2. docker compose up -d nginx
+#   3. docker compose run --rm certbot certonly --webroot -w /var/www/certbot \
+#        --email YOUR_EMAIL -d analogy.postbaby.uz --agree-tos --no-eff-email
+#   4. cp nginx/conf.d/app.conf.ssl nginx/conf.d/app.conf
+#      (or restore the original app.conf)
+#   5. docker compose exec nginx nginx -s reload
+
+server {
+    listen 80;
+    server_name analogy.postbaby.uz;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        proxy_pass         http://api:8000;
+        proxy_http_version 1.1;
+        proxy_set_header   Host            $host;
+        proxy_set_header   X-Real-IP       $remote_addr;
+        proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}

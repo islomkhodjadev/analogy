@@ -1,0 +1,53 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: Deploy to VPS
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT }}
+          script: |
+            set -e
+            cd ${{ secrets.APP_DIR }}
+
+            # Pull latest code (HTTPS — no deploy key needed on server)
+            git pull origin main
+
+            # Write .env from GitHub secrets (file is git-ignored, never committed)
+            printf '%s\n' \
+              "POSTGRES_DB=${{ secrets.POSTGRES_DB }}" \
+              "POSTGRES_USER=${{ secrets.POSTGRES_USER }}" \
+              "POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" \
+              "DATABASE_URL=${{ secrets.DATABASE_URL }}" \
+              "REDIS_URL=redis://redis:6379/0" \
+              "JWT_SECRET_KEY=${{ secrets.JWT_SECRET_KEY }}" \
+              "DEFAULT_OPENAI_API_KEY=${{ secrets.DEFAULT_OPENAI_API_KEY }}" \
+              "DEBUG=false" \
+              > .env
+
+            # Rebuild app images only (postgres/redis/nginx reuse existing images)
+            docker compose build --no-cache api worker
+
+            # Restart everything; --remove-orphans cleans up removed services
+            docker compose up -d --remove-orphans
+
+            # Reload nginx in-place so the new config takes effect without downtime
+            docker compose exec -T nginx nginx -s reload
+
+            # Remove dangling images to free disk space
+            docker image prune -f
