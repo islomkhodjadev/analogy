@@ -1,3 +1,5 @@
+from typing import List
+
 from pydantic_settings import BaseSettings
 
 
@@ -16,6 +18,8 @@ class Settings(BaseSettings):
 
     app_name: str = "auto_screen API"
     debug: bool = False
+
+    allowed_origins: List[str] = ["http://localhost:3000", "http://localhost:5173"]
 
     class Config:
         env_file = ".env"
