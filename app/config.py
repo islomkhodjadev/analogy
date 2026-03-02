@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     app_name: str = "auto_screen API"
     debug: bool = False
 
-    allowed_origins: List[str] = ["http://localhost:3000", "http://localhost:5173"]
+    allowed_origins: List[str] = ["http://localhost:3000", "http://localhost:5173", "https://webskaut.netlify.app"]
 
     class Config:
         env_file = ".env"
