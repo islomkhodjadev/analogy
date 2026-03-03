@@ -788,12 +788,104 @@ class SiteAgent:
         "attach",
     )
 
+    def _take_dom_snapshot(self):
+        """Take a lightweight DOM snapshot for before/after comparison.
+
+        Returns a dict with element counts and content hashes that can detect
+        visual changes (modals, tab switches, accordions, drawers) without
+        relying on specific CSS class patterns.
+        """
+        try:
+            return self._eval_js(
+                """(() => {
+                var body = document.body;
+                if (!body) return {total: 0, visible: 0, text: ''};
+                // Count total and visible elements
+                var all = body.querySelectorAll('*');
+                var visible = 0;
+                for (var i = 0; i < all.length; i++) {
+                    var r = all[i].getBoundingClientRect();
+                    if (r.width > 0 && r.height > 0) visible++;
+                }
+                // Get a content fingerprint from visible text in the main area
+                var main = document.querySelector('main, [role="main"], .main-content, #content, #app, #root');
+                var textSource = main || body;
+                var textSnap = (textSource.innerText || '').substring(0, 2000);
+                // Count overlay/fixed elements
+                var overlays = 0;
+                for (var j = 0; j < all.length; j++) {
+                    var s = window.getComputedStyle(all[j]);
+                    if ((s.position === 'fixed' || s.position === 'absolute') &&
+                        parseInt(s.zIndex) > 99 &&
+                        all[j].offsetWidth > 100 && all[j].offsetHeight > 100 &&
+                        s.display !== 'none' && s.visibility !== 'hidden') {
+                        overlays++;
+                    }
+                }
+                return {
+                    total: all.length,
+                    visible: visible,
+                    overlays: overlays,
+                    text: textSnap
+                };
+            })()"""
+            )
+        except Exception:
+            return None
+
+    def _has_significant_dom_change(self, before, after):
+        """Compare two DOM snapshots to detect significant visual changes.
+
+        Catches: modals, tab content switches, accordion expansions,
+        drawer slides, inline panel changes — anything that meaningfully
+        alters what the user sees on the page.
+        """
+        if not before or not after:
+            return False
+
+        # New overlay appeared (modal, drawer, popup)
+        if after.get("overlays", 0) > before.get("overlays", 0):
+            return True
+
+        # Significant element count change (content appeared/disappeared)
+        total_before = before.get("total", 0)
+        total_after = after.get("total", 0)
+        if total_before > 0:
+            change_ratio = abs(total_after - total_before) / max(total_before, 1)
+            if change_ratio > 0.05 and abs(total_after - total_before) > 10:
+                return True
+
+        # Visible element count changed significantly
+        vis_before = before.get("visible", 0)
+        vis_after = after.get("visible", 0)
+        if vis_before > 0:
+            vis_change = abs(vis_after - vis_before) / max(vis_before, 1)
+            if vis_change > 0.08 and abs(vis_after - vis_before) > 15:
+                return True
+
+        # Text content changed significantly (tab switch, accordion expand)
+        text_before = before.get("text", "")
+        text_after = after.get("text", "")
+        if text_before and text_after:
+            # Quick check: if first 200 chars differ, content changed
+            if text_before[:200] != text_after[:200]:
+                return True
+            # Check if significant new text appeared
+            if len(text_after) > len(text_before) + 100:
+                return True
+
+        return False
+
     def _explore_ui_states(self):
         """Click modal/tab/drawer triggers on the current page and screenshot each state.
 
         This runs AFTER the base page screenshot. It finds buttons/tabs that
         likely open modals, drawers, dropdowns, or switch tabs — clicks them,
         takes a screenshot of the new UI state, then dismisses (Escape/click away).
+
+        Uses DOM snapshot comparison to detect ANY visual change after a click,
+        not just modals — this catches tab panels, accordions, sliding drawers,
+        inline expansions, and other SPA UI states that don't change the URL.
 
         Returns the number of UI state captures made.
         """
@@ -817,7 +909,7 @@ class SiteAgent:
         if not clickables:
             return 0
 
-        # Filter for UI trigger candidates (buttons/tabs that open modals)
+        # Filter for UI trigger candidates
         candidates = []
         for el in clickables:
             text = (el.get("text", "") or "").strip()
@@ -847,17 +939,19 @@ class SiteAgent:
             # Also look for aria-expanded hints (accordions, dropdowns)
             is_expandable = "expanded" in selector or "aria-haspopup" in selector
 
-            # "..." or "\u22ee" or "\u22ef" or "\u2026" menu triggers
+            # "..." or "⋮" or "⋯" or "…" menu triggers
             is_dots_menu = text in ("...", "\u22ee", "\u22ef", "\u2026")
 
             # Accept: tabs, expandables, dots menus,
-            # or any button/link with trigger keyword
+            # buttons/links with trigger keyword,
+            # AND any button at all (we'll use DOM diff to decide if it's worth capturing)
             if (
                 is_tab
                 or is_expandable
                 or is_dots_menu
                 or (is_button and has_keyword)
                 or (is_link and has_keyword and len(text) < 30)
+                or is_button  # Try ALL buttons — DOM diff will filter
             ):
                 candidates.append(
                     {
@@ -865,7 +959,13 @@ class SiteAgent:
                         "is_tab": is_tab,
                         "is_expandable": is_expandable or is_dots_menu,
                         "priority": (
-                            0 if is_tab else (1 if is_expandable or is_dots_menu else 2)
+                            0
+                            if is_tab
+                            else (
+                                1
+                                if is_expandable or is_dots_menu
+                                else (2 if has_keyword else 3)
+                            )
                         ),
                     }
                 )
@@ -873,7 +973,7 @@ class SiteAgent:
         if not candidates:
             return 0
 
-        # Sort: tabs first, then expandables, then buttons
+        # Sort: tabs first, then expandables, then keyword buttons, then other buttons
         candidates.sort(key=lambda x: x["priority"])
         candidates = candidates[:MAX_UI_INTERACTIONS_PER_PAGE]
 
@@ -892,6 +992,9 @@ class SiteAgent:
             click_text = candidate["text"]
             text_lower = click_text.lower()
 
+            # Take DOM snapshot BEFORE the click
+            dom_before = self._take_dom_snapshot()
+
             # Click the trigger
             clicked = self.browser.click_by_text(click_text)
             if not clicked:
@@ -904,7 +1007,7 @@ class SiteAgent:
             self.clicked_texts.add(click_text)
             self.clicked_actions.add(click_key)
 
-            # Wait for modal/tab content to render
+            # Wait for content to render
             time.sleep(0.5)
 
             # Check if URL changed (this was a navigation, not a modal)
@@ -919,10 +1022,23 @@ class SiteAgent:
                 self._record_action("click", click_text, "Navigation via UI click")
                 break  # Stop UI exploration, main loop will handle the new page
 
+            # Take DOM snapshot AFTER the click
+            dom_after = self._take_dom_snapshot()
+
             # Detect if a modal/dialog/overlay appeared
             has_modal = self._detect_modal_overlay()
 
-            if has_modal or candidate["is_tab"] or candidate["is_expandable"]:
+            # Detect ANY significant DOM change (tab switch, accordion, drawer, etc.)
+            has_dom_change = self._has_significant_dom_change(dom_before, dom_after)
+
+            should_capture = (
+                has_modal
+                or candidate["is_tab"]
+                or candidate["is_expandable"]
+                or has_dom_change
+            )
+
+            if should_capture:
                 # Take screenshot of this UI state
                 state_desc = ""
                 if candidate["is_tab"]:
@@ -931,6 +1047,8 @@ class SiteAgent:
                     state_desc = "{} modal/dialog open".format(click_text)
                 elif candidate["is_expandable"]:
                     state_desc = "{} expanded".format(click_text)
+                elif has_dom_change:
+                    state_desc = "{} UI state".format(click_text)
                 else:
                     state_desc = "{} UI state".format(click_text)
 
@@ -952,8 +1070,14 @@ class SiteAgent:
                 if len(self.captures) > pre:
                     ui_captures += 1
                     self._record_action("ui_state", click_text, state_desc)
+                    logger.info(
+                        "  UI capture: '{}' ({})".format(
+                            click_text[:30],
+                            "modal" if has_modal else "dom_change" if has_dom_change else "tab/expand",
+                        )
+                    )
 
-                # Dismiss modal (press Escape, then wait)
+                # Dismiss modal/overlay (press Escape, then wait)
                 if has_modal:
                     try:
                         if self.config.browser_engine == "selenium":
@@ -967,6 +1091,12 @@ class SiteAgent:
                         time.sleep(0.3)
                     except Exception:
                         pass
+            else:
+                logger.debug(
+                    "  UI click '{}': no visual change detected, skipping".format(
+                        click_text[:30]
+                    )
+                )
 
         return ui_captures
 
@@ -982,7 +1112,7 @@ class SiteAgent:
                     var r = dialogs[i].getBoundingClientRect();
                     if (r.width > 100 && r.height > 100) return true;
                 }
-                // Check for common modal class patterns
+                // Check for common modal class patterns (including data-state for Radix/Headless UI)
                 var modals = document.querySelectorAll(
                     '[class*="modal"][class*="show"], [class*="modal"][class*="open"], ' +
                     '[class*="modal"][class*="active"], [class*="modal"][class*="visible"], ' +
@@ -990,22 +1120,38 @@ class SiteAgent:
                     '[class*="overlay"][class*="show"], [class*="overlay"][class*="active"], ' +
                     '[class*="dialog"][class*="open"], [class*="popup"][class*="open"], ' +
                     '[class*="popup"][class*="show"], [class*="popup"][class*="visible"], ' +
-                    '[class*="sidebar"][class*="open"], [class*="panel"][class*="open"]'
+                    '[class*="sidebar"][class*="open"], [class*="panel"][class*="open"], ' +
+                    '[class*="sheet"][class*="open"], [class*="sheet"][class*="active"], ' +
+                    '[class*="bottomsheet"], [class*="bottom-sheet"], ' +
+                    '[data-state="open"], [data-open="true"], ' +
+                    '[class*="dropdown"][class*="show"], [class*="dropdown"][class*="open"], ' +
+                    '[class*="popover"][class*="show"], [class*="popover"][class*="open"], ' +
+                    '[class*="tooltip"][class*="show"]'
                 );
                 for (var j = 0; j < modals.length; j++) {
                     var rm = modals[j].getBoundingClientRect();
                     if (rm.width > 100 && rm.height > 100) return true;
                 }
-                // Check for fixed/absolute positioned elements with high z-index
+                // Check for backdrop overlays (semi-transparent full-screen layers = modal behind them)
                 var all = document.querySelectorAll('*');
                 for (var k = 0; k < all.length; k++) {
                     var s = window.getComputedStyle(all[k]);
+                    var zIdx = parseInt(s.zIndex);
+                    if (isNaN(zIdx)) continue;
                     if ((s.position === 'fixed' || s.position === 'absolute') &&
-                        parseInt(s.zIndex) > 999 &&
+                        zIdx > 99 &&
                         all[k].offsetWidth > 200 && all[k].offsetHeight > 200 &&
                         s.display !== 'none' && s.visibility !== 'hidden') {
-                        // Skip full-screen overlays (likely backdrop, not modal content)
-                        if (all[k].offsetWidth < window.innerWidth * 0.95) return true;
+                        // Full-screen with backdrop = modal is open
+                        var bg = s.backgroundColor;
+                        var isBackdrop = (bg && (bg.indexOf('rgba') !== -1 && bg.indexOf(', 0)') === -1));
+                        if (all[k].offsetWidth >= window.innerWidth * 0.9 && isBackdrop) {
+                            return true;
+                        }
+                        // Non-fullscreen floating panel = modal/popover
+                        if (all[k].offsetWidth < window.innerWidth * 0.95 && zIdx > 999) {
+                            return true;
+                        }
                     }
                 }
                 return false;
