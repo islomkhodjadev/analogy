@@ -430,9 +430,17 @@ class PlaywrightBrowserController:
     def navigate(self, url):
         """Go to URL, wait for load, dismiss overlays, return page state."""
         try:
-            self.page.goto(
-                url, wait_until="domcontentloaded", timeout=REQUEST_TIMEOUT * 1000
-            )
+            # Use "commit" to proceed as soon as first response is received,
+            # then wait for content ourselves — this handles SPAs much better
+            # than "domcontentloaded" which fires too early for dynamic content
+            try:
+                self.page.goto(
+                    url, wait_until="domcontentloaded", timeout=REQUEST_TIMEOUT * 1000
+                )
+            except PlaywrightTimeout:
+                logger.warning("Navigation timed out (domcontentloaded) for: {}".format(url[:100]))
+                # Page may have partially loaded — continue anyway
+
             self._wait_for_load()
             self._dismiss_overlays()
             return self.current_state()
@@ -494,8 +502,9 @@ class PlaywrightBrowserController:
     def click(self, selector):
         """Click element by CSS selector."""
         try:
+            url_before = self.page.url
             self.page.click(selector, timeout=5000)
-            self.page.wait_for_load_state("domcontentloaded", timeout=5000)
+            self._wait_after_click(url_before)
             return self.current_state()
         except Exception as e:
             logger.warning("Click failed on '{}': {}".format(selector, e))
@@ -899,7 +908,7 @@ class PlaywrightBrowserController:
 
     def click_by_text(self, text):
         """Click element by its visible text — multi-pass matching."""
-        # Playwright has great built-in text matching
+        url_before = self.page.url
         try:
             # Try exact text match first via Playwright locator
             for strategy in [
@@ -913,7 +922,8 @@ class PlaywrightBrowserController:
                     loc = strategy()
                     if loc.count() > 0 and loc.first.is_visible(timeout=500):
                         loc.first.click(timeout=3000)
-                        time.sleep(1.5)
+                        # Wait for potential navigation or SPA transition
+                        self._wait_after_click(url_before)
                         return True
                 except Exception:
                     continue
@@ -972,11 +982,37 @@ class PlaywrightBrowserController:
                 safe_text,
             )
             if result:
-                time.sleep(1.5)
+                # JS click doesn't trigger Playwright navigation tracking,
+                # so we must explicitly wait for any navigation to complete
+                self._wait_after_click(url_before)
             return bool(result)
         except Exception as e:
             logger.warning("Click by text failed for '{}': {}".format(text, e))
             return False
+
+    def _wait_after_click(self, url_before):
+        """Wait for navigation or SPA transition after a click.
+
+        If the URL changed, wait for the new page to load.
+        If it didn't, give SPA routers a brief moment to update.
+        """
+        try:
+            # Brief wait for navigation to start
+            time.sleep(0.3)
+
+            url_after = self.page.url
+            if url_after != url_before:
+                # Navigation happened — wait for new page to fully load
+                try:
+                    self.page.wait_for_load_state("domcontentloaded", timeout=8000)
+                except Exception:
+                    pass
+                self._wait_for_dom_stable(settle_time=0.8, max_wait=4)
+            else:
+                # No navigation — could be SPA or modal, brief wait for render
+                self._wait_for_dom_stable(settle_time=0.5, max_wait=2)
+        except Exception:
+            time.sleep(0.5)
 
     def go_back(self):
         """Navigate back."""
@@ -1107,7 +1143,7 @@ class PlaywrightBrowserController:
                     if (seenUrls[normalized]) continue;
                     seenUrls[normalized] = true;
                     var text = (a.innerText || a.title || a.getAttribute('aria-label') || '').trim().substring(0, 80);
-                    var isInternal = (u.hostname === baseDomain);
+                    var isInternal = (u.hostname === baseDomain || u.hostname.endsWith('.' + baseDomain) || baseDomain.endsWith('.' + u.hostname));
                     var rect = a.getBoundingClientRect();
                     var visible = rect.width > 0 && rect.height > 0;
                     var inNav = false;
@@ -1320,22 +1356,43 @@ class PlaywrightBrowserController:
                     """() => {
                 var selectors = [
                     "button:not([disabled])", "[role='button']", "[role='tab']",
-                    "[aria-expanded='false']", "details:not([open]) > summary",
-                    "a[href='#']", "a[href='javascript:void(0)']"
+                    "[role='menuitem']", "[role='switch']", "[role='link']",
+                    "[aria-expanded]", "[aria-haspopup]",
+                    "details > summary",
+                    "a[href='#']", "a[href='javascript:void(0)']",
+                    "[tabindex='0']"
                 ];
                 var seen = new Set();
                 var elements = [];
                 for (var s = 0; s < selectors.length; s++) {
                     var found = document.querySelectorAll(selectors[s]);
-                    for (var i = 0; i < found.length && elements.length < 30; i++) {
+                    for (var i = 0; i < found.length && elements.length < 50; i++) {
                         var el = found[i];
-                        var text = (el.innerText || '').trim().substring(0, 80);
-                        if (!text || seen.has(text)) continue;
+                        var text = (el.getAttribute('aria-label') || el.innerText || '').trim().substring(0, 80);
+                        if (!text || seen.has(text.toLowerCase())) continue;
                         var rect = el.getBoundingClientRect();
-                        if (rect.width === 0 || rect.height === 0) continue;
-                        seen.add(text);
+                        if (rect.width < 5 || rect.height < 5) continue;
+                        if (rect.top > 3000) continue;
+                        var style = window.getComputedStyle(el);
+                        if (style.visibility === 'hidden' || style.display === 'none') continue;
+                        seen.add(text.toLowerCase());
                         elements.push({selector: selectors[s], text: text, tag: el.tagName.toLowerCase()});
                     }
+                }
+                // Also find cursor:pointer elements not covered above
+                var pointerEls = document.querySelectorAll('div, span, li, label');
+                for (var p = 0; p < pointerEls.length && elements.length < 50; p++) {
+                    var pel = pointerEls[p];
+                    try {
+                        if (window.getComputedStyle(pel).cursor !== 'pointer') continue;
+                        if (pel.closest('a, button, [role="button"]')) continue;
+                        var pt = (pel.getAttribute('aria-label') || pel.innerText || '').trim().substring(0, 80);
+                        if (!pt || pt.length > 60 || seen.has(pt.toLowerCase())) continue;
+                        var pr = pel.getBoundingClientRect();
+                        if (pr.width < 5 || pr.height < 5) continue;
+                        seen.add(pt.toLowerCase());
+                        elements.push({selector: 'cursor:pointer', text: pt, tag: pel.tagName.toLowerCase()});
+                    } catch(e) {}
                 }
                 return elements;
             }"""
@@ -1356,48 +1413,35 @@ class PlaywrightBrowserController:
         except Exception:
             pass
 
-        time.sleep(0.5)
+        time.sleep(0.3)
 
-        # DOM stability check
-        self._wait_for_dom_stable()
-
-        # Content presence check
-        self._wait_for_content()
-
-        # SPA route transition wait
+        # Wait for network to be idle (no pending requests for 300ms)
         try:
-            self.page.evaluate(
-                """() => {
-                window.__autoscreen_nav_done = false;
-                requestAnimationFrame(function() {
-                    setTimeout(function() { window.__autoscreen_nav_done = true; }, 500);
-                });
-            }"""
-            )
-            deadline = time.time() + 3
-            while time.time() < deadline:
-                done = self.page.evaluate("() => window.__autoscreen_nav_done === true")
-                if done:
-                    break
-                time.sleep(0.3)
+            self.page.wait_for_load_state("networkidle", timeout=5000)
         except Exception:
             pass
 
-    def _wait_for_dom_stable(self, settle_time=1.5, max_wait=8):
+        # DOM stability check (reduced settle time)
+        self._wait_for_dom_stable(settle_time=0.8, max_wait=5)
+
+        # Content presence check (reduced timeout)
+        self._wait_for_content(max_wait=5)
+
+    def _wait_for_dom_stable(self, settle_time=0.8, max_wait=5):
         """Poll DOM element count until it stops changing."""
         try:
             last_count = self.page.evaluate(
                 "() => document.querySelectorAll('*').length"
             )
         except Exception:
-            time.sleep(2)
+            time.sleep(1)
             return
 
         stable_since = time.time()
         deadline = time.time() + max_wait
 
         while time.time() < deadline:
-            time.sleep(0.4)
+            time.sleep(0.3)
             try:
                 current_count = self.page.evaluate(
                     "() => document.querySelectorAll('*').length"
@@ -1410,7 +1454,7 @@ class PlaywrightBrowserController:
             elif time.time() - stable_since >= settle_time:
                 break
 
-    def _wait_for_content(self, max_wait=10):
+    def _wait_for_content(self, max_wait=5):
         """Wait until the page has at least some interactive content."""
         deadline = time.time() + max_wait
         while time.time() < deadline:
@@ -1431,7 +1475,7 @@ class PlaywrightBrowserController:
                     return
             except Exception:
                 pass
-            time.sleep(1)
+            time.sleep(0.5)
         logger.warning("Timed out waiting for page content ({}s)".format(max_wait))
 
     # ── URL helpers ───────────────────────────────────────
@@ -1447,7 +1491,15 @@ class PlaywrightBrowserController:
 
     def _is_same_domain(self, url):
         try:
-            return urlparse(url).netloc == self.base_domain
+            hostname = urlparse(url).netloc
+            if hostname == self.base_domain:
+                return True
+            # Handle subdomains: app.example.com is same domain as example.com
+            if hostname.endswith('.' + self.base_domain):
+                return True
+            if self.base_domain.endswith('.' + hostname):
+                return True
+            return False
         except Exception:
             return False
 
