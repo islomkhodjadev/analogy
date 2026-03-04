@@ -900,11 +900,43 @@ class SiteAgent:
         current_url = state.get("url", "")
         page_title = state.get("title", "")
 
-        # Get clickable elements on the page
+        # Get clickable elements on the page (standard detection)
         try:
             clickables = self.browser.get_clickable_elements()
         except Exception:
             clickables = []
+
+        # Supplement with AI-parsed hidden clickables from page source
+        try:
+            html_source = self.browser.get_page_content(max_chars=8000)
+            known_texts = [c.get("text", "") for c in clickables]
+            ai_clickables = self.ai.find_hidden_clickables(
+                url=current_url,
+                html_chunk=html_source,
+                known_clickables=known_texts,
+            )
+            if ai_clickables:
+                logger.info(
+                    "  AI found {} hidden clickable(s): {}".format(
+                        len(ai_clickables),
+                        ", ".join(
+                            "'{}'".format(c.get("text", "")[:30])
+                            for c in ai_clickables[:5]
+                        ),
+                    )
+                )
+                for ac in ai_clickables:
+                    ac_text = ac.get("text", "").strip()
+                    if ac_text and len(ac_text) <= 80:
+                        clickables.append(
+                            {
+                                "text": ac_text,
+                                "tag": "ai-detected",
+                                "selector": ac.get("selector_hint", ""),
+                            }
+                        )
+        except Exception as e:
+            logger.debug("  AI clickable detection skipped: {}".format(e))
 
         if not clickables:
             return 0
@@ -934,6 +966,11 @@ class SiteAgent:
             is_tab = "tab" in selector or "tab" in tag or 'role="tab"' in selector
             is_button = tag == "button" or "button" in selector
             is_link = tag == "a"
+            is_ai_detected = tag == "ai-detected"
+            is_framework = selector in (
+                "framework", "css-class", "js-handler",
+                "data-toggle", "framework-binding", "event-handler",
+            )
             has_keyword = any(kw in text_lower for kw in self._UI_TRIGGER_KEYWORDS)
 
             # Also look for aria-expanded hints (accordions, dropdowns)
@@ -942,13 +979,15 @@ class SiteAgent:
             # "..." or "⋮" or "⋯" or "…" menu triggers
             is_dots_menu = text in ("...", "\u22ee", "\u22ef", "\u2026")
 
-            # Accept: tabs, expandables, dots menus,
-            # buttons/links with trigger keyword,
+            # Accept: tabs, expandables, dots menus, AI-detected elements,
+            # framework-bound elements, buttons/links with trigger keyword,
             # AND any button at all (we'll use DOM diff to decide if it's worth capturing)
             if (
                 is_tab
                 or is_expandable
                 or is_dots_menu
+                or is_ai_detected
+                or is_framework
                 or (is_button and has_keyword)
                 or (is_link and has_keyword and len(text) < 30)
                 or is_button  # Try ALL buttons — DOM diff will filter
@@ -964,7 +1003,15 @@ class SiteAgent:
                             else (
                                 1
                                 if is_expandable or is_dots_menu
-                                else (2 if has_keyword else 3)
+                                else (
+                                    1
+                                    if is_ai_detected
+                                    else (
+                                        2
+                                        if has_keyword or is_framework
+                                        else 3
+                                    )
+                                )
                             )
                         ),
                     }
@@ -1168,10 +1215,13 @@ class SiteAgent:
         """Add newly discovered URLs to the BFS queue.
 
         Filters out non-page URLs, already-seen URLs, and failed targets.
+        Uses AI to filter out duplicate-template links (e.g. many marketplace
+        categories that share the same layout).
         Prioritizes nav links (enqueued first) over content links.
         """
         nav_links = []
         other_links = []
+        candidate_infos = []  # For AI filtering
 
         for url_key, info in list(self.discovered_urls.items()):
             if url_key in bfs_enqueued:
@@ -1194,6 +1244,42 @@ class SiteAgent:
                 continue
 
             bfs_enqueued.add(url_key)
+            candidate_infos.append(info)
+
+        if not candidate_infos:
+            return
+
+        # Use AI to filter links when there are many candidates
+        # (likely a marketplace/catalog with many same-template pages)
+        ai_filtered_urls = None
+        if len(candidate_infos) > 8:
+            try:
+                ai_filtered_urls = set(
+                    self.ai.filter_links_by_ui_diversity(
+                        candidate_links=candidate_infos,
+                        already_captured=self.captures,
+                        theme_counts=self.theme_counts,
+                    )
+                )
+                if ai_filtered_urls:
+                    logger.info(
+                        "  AI link filter: {} / {} links selected as unique templates".format(
+                            len(ai_filtered_urls), len(candidate_infos)
+                        )
+                    )
+            except Exception as e:
+                logger.warning("  AI link filter failed, using all links: {}".format(e))
+                ai_filtered_urls = None
+
+        for info in candidate_infos:
+            target = info.get("url", "")
+
+            # If AI filtering is active, skip links not selected by AI
+            if ai_filtered_urls is not None and target not in ai_filtered_urls:
+                # Still allow nav links through — they're usually structurally unique
+                if not info.get("in_nav"):
+                    continue
+
             if info.get("in_nav"):
                 nav_links.append(target)
             else:

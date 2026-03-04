@@ -156,6 +156,183 @@ If nothing new, return: {{"new_pages": []}}""".format(
         result = self._parse_json_response(response)
         return result.get("new_pages", [])[:3]
 
+    # ── Filter links by UI diversity (avoid duplicate templates) ──
+
+    def filter_links_by_ui_diversity(self, candidate_links, already_captured, theme_counts):
+        """Filter a batch of discovered links, keeping only those that lead to
+        genuinely different UI templates/page types.
+
+        This prevents the BFS from wasting time on dozens of marketplace
+        categories, product variants, or blog posts that share the same layout.
+
+        Args:
+            candidate_links: list of dicts with 'url', 'text', 'in_nav' keys
+            already_captured: list of dicts with 'url', 'theme', 'description'
+            theme_counts: dict of theme -> count
+
+        Returns:
+            list of URLs (strings) that the AI considers structurally unique.
+        """
+        if not candidate_links:
+            return []
+
+        links_summary = "\n".join(
+            "- [{}]({}){}".format(
+                l.get("text", "")[:60],
+                l.get("url", ""),
+                " (nav)" if l.get("in_nav") else "",
+            )
+            for l in candidate_links[:60]
+        )
+
+        captured_summary = "\n".join(
+            "- [{}] {} — {}".format(
+                c.get("theme", ""), c.get("url", ""), c.get("description", "")[:50]
+            )
+            for c in already_captured[-20:]
+        )
+
+        theme_dist = ", ".join(
+            "{}={}".format(t, n)
+            for t, n in sorted(theme_counts.items(), key=lambda x: -x[1])
+        )
+
+        prompt = """You are analyzing discovered links on a website to decide which ones lead to
+GENUINELY DIFFERENT page templates/layouts vs. pages that reuse the same template with different data.
+
+CANDIDATE LINKS:
+{links}
+
+ALREADY CAPTURED:
+{captured}
+
+THEME COUNTS: {themes}
+
+YOUR TASK:
+Select ONLY the links that are likely to show a DIFFERENT UI layout/template.
+
+RULES:
+- If there are multiple category links (e.g. /electronics, /clothing, /toys), pick ONLY ONE — they use the same listing template.
+- If there are multiple product/item links, pick ONLY ONE — detail pages share one template.
+- If there are multiple blog posts, pick ONLY ONE.
+- If there are multiple user profiles, pick ONLY ONE.
+- NAV links are more likely to lead to structurally different pages — prefer them.
+- Links to About, Contact, FAQ, Legal, Pricing, Settings, Dashboard, Cart, Search are ALWAYS unique templates — include them.
+- Look at the URL path structure: /category/X and /category/Y are the SAME template.
+- Look at already captured themes — if we have 2+ of a theme, do NOT add more of that theme.
+- Think like a UI/UX designer: which pages show DIFFERENT components, layouts, or interaction patterns?
+
+Respond with ONLY JSON:
+{{
+  "selected_urls": ["url1", "url2", ...],
+  "reasoning": "brief explanation"
+}}""".format(
+            links=links_summary,
+            captured=captured_summary or "(none yet)",
+            themes=theme_dist or "(none yet)",
+        )
+
+        response = self._call_openai(
+            prompt,
+            system=(
+                "You filter website links to find structurally unique pages. "
+                "Marketplace categories, product variants, and blog posts all "
+                "share the SAME template — pick only one representative of each. "
+                "Respond with valid JSON only."
+            ),
+        )
+        result = self._parse_json_response(response)
+        if result.get("action") == "quota_exceeded":
+            # If AI is dead, return all links (fall back to heuristic filtering)
+            return [l.get("url", "") for l in candidate_links]
+        return result.get("selected_urls", [])
+
+    # ── Analyze page source for hidden interactive elements ──
+
+    def find_hidden_clickables(self, url, html_chunk, known_clickables):
+        """Analyze a chunk of page HTML to find interactive elements that
+        standard CSS selectors miss.
+
+        Many modern frameworks (React, Vue, Angular, Svelte) bind click handlers
+        via JS props, data attributes, or custom event systems that don't produce
+        standard HTML attributes. This method asks the AI to identify such elements
+        from the rendered HTML source.
+
+        Args:
+            url: current page URL
+            html_chunk: cleaned HTML (up to 8000 chars)
+            known_clickables: list of already-detected clickable texts
+
+        Returns:
+            list of dicts with 'text' and 'description' keys
+        """
+        known_summary = ", ".join(
+            "'{}'".format(c[:40]) for c in known_clickables[:20]
+        )
+
+        prompt = """Analyze this HTML source to find interactive/clickable elements that are NOT
+standard buttons or links but ARE clickable in the actual UI.
+
+PAGE: {url}
+
+HTML SOURCE (partial):
+---
+{html}
+---
+
+ALREADY DETECTED CLICKABLES:
+{known}
+
+Look for elements that are CLICKABLE but use non-standard patterns:
+- <span>, <div>, <li>, <td> etc. that act as buttons (often have class names like
+  'clickable', 'selectable', 'action', 'trigger', 'item', 'option')
+- Elements with data-* attributes suggesting click handlers (data-action, data-click,
+  data-toggle, data-target, data-bs-toggle, data-testid with action verbs)
+- Elements with framework bindings visible in HTML: @click, (click), ng-click,
+  v-on:click, x-on:click, wire:click
+- Elements with cursor:pointer in inline styles
+- Custom web components (<my-button>, <app-link> etc.) that render as clickable
+- Card elements that are entirely clickable (product cards, list items)
+- Icon buttons (SVG inside a clickable wrapper with no text but an aria-label)
+
+DO NOT include:
+- Standard <a href="..."> links (already detected)
+- Standard <button> elements (already detected)
+- Elements already in the known clickables list
+- Non-interactive structural elements (headers, paragraphs, containers)
+- Disabled or hidden elements
+
+Respond with ONLY JSON:
+{{
+  "clickables": [
+    {{
+      "text": "visible text or aria-label of the element",
+      "selector_hint": "CSS-like description to find it (e.g. 'span.action-btn', 'div[data-action=edit]')",
+      "description": "what clicking it likely does"
+    }}
+  ]
+}}
+
+If nothing found beyond standard elements, return: {{"clickables": []}}""".format(
+            url=url,
+            html=html_chunk[:8000],
+            known=known_summary or "(none)",
+        )
+
+        response = self._call_openai(
+            prompt,
+            system=(
+                "You are an expert frontend developer analyzing HTML to find "
+                "non-obvious interactive elements. You understand React, Vue, "
+                "Angular, Svelte, and custom component patterns. "
+                "Respond with valid JSON only."
+            ),
+        )
+        result = self._parse_json_response(response)
+        if result.get("action") == "quota_exceeded":
+            return []
+        return result.get("clickables", [])
+
     # ── Find clickable UI elements worth screenshotting ──────
 
     def find_clickable_ui(

@@ -1213,10 +1213,95 @@ class PlaywrightBrowserController:
                 addClickable(el, reason);
             }
 
-            // cursor:pointer pass
+            // Pass 2: Button-like anchors (no real href)
+            var btnAnchors = document.querySelectorAll('a[href="#"], a[href^="javascript:"], a:not([href])');
+            for (var ba = 0; ba < btnAnchors.length; ba++) {
+                if (result.clickable_elements.length >= 140) break;
+                var baEl = btnAnchors[ba];
+                if (!isClickCandidate(baEl)) continue;
+                addClickable(baEl, 'anchor-button');
+            }
+
+            // Pass 3: Framework data attributes (React, Vue, Angular, Bootstrap, etc.)
+            var frameworkSelectors = '[data-toggle], [data-bs-toggle], [data-action], ' +
+                '[ng-click], [v-on\\:click], [\\@click], [x-on\\:click], ' +
+                '[wire\\:click], [data-click], [data-onclick]';
+            try {
+                var frameworkEls = document.querySelectorAll(frameworkSelectors);
+                for (var fw = 0; fw < frameworkEls.length; fw++) {
+                    if (result.clickable_elements.length >= 140) break;
+                    var fwEl = frameworkEls[fw];
+                    if (!isClickCandidate(fwEl)) continue;
+                    var fwReason = fwEl.hasAttribute('data-toggle') || fwEl.hasAttribute('data-bs-toggle')
+                        ? 'data-toggle' : 'framework-binding';
+                    addClickable(fwEl, fwReason);
+                }
+            } catch(fwe) {}
+
+            // Pass 4: Inline event handlers beyond onclick
+            var eventSelectors = '[onmousedown], [onmouseup], [ontouchstart], [ontouchend], [onpointerdown]';
+            try {
+                var eventEls = document.querySelectorAll(eventSelectors);
+                for (var ev = 0; ev < eventEls.length; ev++) {
+                    if (result.clickable_elements.length >= 140) break;
+                    var evEl = eventEls[ev];
+                    if (!isClickCandidate(evEl)) continue;
+                    addClickable(evEl, 'event-handler');
+                }
+            } catch(eve) {}
+
+            // Pass 5: CSS class patterns for common button-like elements
+            var classSelectors = '.btn, .button, .dropdown-toggle, .accordion-header, ' +
+                '.accordion-button, .tab, .tab-item, .nav-link, .card, .card-header, ' +
+                '.list-group-item, .page-link, .chip, .tag, .badge[role], ' +
+                '.clickable, .selectable, .action-item, .trigger';
+            try {
+                var classEls = document.querySelectorAll(classSelectors);
+                for (var cl = 0; cl < classEls.length; cl++) {
+                    if (result.clickable_elements.length >= 140) break;
+                    var clEl = classEls[cl];
+                    if (!isClickCandidate(clEl)) continue;
+                    addClickable(clEl, 'css-class');
+                }
+            } catch(cle) {}
+
+            // Pass 6: Framework JS handler detection (React, Vue)
+            try {
+                var allInteractive = document.querySelectorAll('div, span, li, td, label, section, article');
+                for (var ri = 0; ri < allInteractive.length; ri++) {
+                    if (result.clickable_elements.length >= 140) break;
+                    var riEl = allInteractive[ri];
+                    if (!isClickCandidate(riEl)) continue;
+                    var hasHandler = false;
+                    // React fiber detection
+                    var keys = Object.keys(riEl);
+                    for (var rk = 0; rk < keys.length; rk++) {
+                        if (keys[rk].indexOf('__reactFiber') === 0 || keys[rk].indexOf('__reactProps') === 0) {
+                            try {
+                                if (riEl[keys[rk]] && riEl[keys[rk]].onClick) {
+                                    hasHandler = true;
+                                    break;
+                                }
+                            } catch(re) {}
+                        }
+                    }
+                    // Vue event detection
+                    if (!hasHandler && (riEl.__vue__ || riEl._vei || riEl.__vueParentComponent)) {
+                        try {
+                            if (riEl._vei && riEl._vei.onClick) hasHandler = true;
+                            else if (riEl.__vue__ && riEl.__vue__.$listeners && riEl.__vue__.$listeners.click) hasHandler = true;
+                        } catch(ve) {}
+                    }
+                    if (hasHandler) {
+                        addClickable(riEl, 'js-handler');
+                    }
+                }
+            } catch(jse) {}
+
+            // Pass 7: cursor:pointer pass (catch-all)
             var pointerCandidates = document.querySelectorAll('div, span, li, td, th, label, img, svg, p, h1, h2, h3, h4, h5, h6');
             for (var cp = 0; cp < pointerCandidates.length; cp++) {
-                if (result.clickable_elements.length >= 100) break;
+                if (result.clickable_elements.length >= 140) break;
                 var cpEl = pointerCandidates[cp];
                 if (!isClickCandidate(cpEl)) continue;
                 try {
@@ -1355,11 +1440,37 @@ class PlaywrightBrowserController:
         return links
 
     def get_clickable_elements(self):
-        """Return interactive elements that might reveal content."""
+        """Return interactive elements that might reveal content.
+
+        Uses multiple detection passes to catch:
+        - Standard semantic elements (button, role=button, tabs, etc.)
+        - Framework-bound elements (data-toggle, @click, ng-click, etc.)
+        - Elements with JS event handlers (React onClick, Vue _vei, etc.)
+        - CSS class patterns (.btn, .dropdown-toggle, .accordion-header, etc.)
+        - cursor:pointer elements (catch-all)
+        """
         try:
             return (
                 self.page.evaluate(
                     """() => {
+                var seen = new Set();
+                var elements = [];
+                var MAX = 80;
+
+                function addEl(el, selector) {
+                    if (elements.length >= MAX) return;
+                    var text = (el.getAttribute('aria-label') || el.innerText || '').trim().substring(0, 80);
+                    if (!text || seen.has(text.toLowerCase())) return;
+                    var rect = el.getBoundingClientRect();
+                    if (rect.width < 5 || rect.height < 5) return;
+                    if (rect.top > 5000) return;
+                    var style = window.getComputedStyle(el);
+                    if (style.visibility === 'hidden' || style.display === 'none') return;
+                    seen.add(text.toLowerCase());
+                    elements.push({selector: selector, text: text, tag: el.tagName.toLowerCase()});
+                }
+
+                // Pass 1: Semantic clickables
                 var selectors = [
                     "button:not([disabled])", "[role='button']", "[role='tab']",
                     "[role='menuitem']", "[role='switch']", "[role='link']",
@@ -1368,36 +1479,60 @@ class PlaywrightBrowserController:
                     "a[href='#']", "a[href='javascript:void(0)']",
                     "[tabindex='0']"
                 ];
-                var seen = new Set();
-                var elements = [];
                 for (var s = 0; s < selectors.length; s++) {
                     var found = document.querySelectorAll(selectors[s]);
-                    for (var i = 0; i < found.length && elements.length < 50; i++) {
-                        var el = found[i];
-                        var text = (el.getAttribute('aria-label') || el.innerText || '').trim().substring(0, 80);
-                        if (!text || seen.has(text.toLowerCase())) continue;
-                        var rect = el.getBoundingClientRect();
-                        if (rect.width < 5 || rect.height < 5) continue;
-                        if (rect.top > 3000) continue;
-                        var style = window.getComputedStyle(el);
-                        if (style.visibility === 'hidden' || style.display === 'none') continue;
-                        seen.add(text.toLowerCase());
-                        elements.push({selector: selectors[s], text: text, tag: el.tagName.toLowerCase()});
+                    for (var i = 0; i < found.length; i++) {
+                        addEl(found[i], selectors[s]);
                     }
                 }
-                // Also find cursor:pointer elements not covered above
-                var pointerEls = document.querySelectorAll('div, span, li, label');
-                for (var p = 0; p < pointerEls.length && elements.length < 50; p++) {
+
+                // Pass 2: Framework data attributes
+                try {
+                    var fwSel = '[data-toggle], [data-bs-toggle], [data-action], ' +
+                        '[ng-click], [v-on\\\\:click], [\\\\@click], [x-on\\\\:click], ' +
+                        '[wire\\\\:click], [data-click]';
+                    var fwEls = document.querySelectorAll(fwSel);
+                    for (var fw = 0; fw < fwEls.length; fw++) addEl(fwEls[fw], 'framework');
+                } catch(e) {}
+
+                // Pass 3: CSS class patterns
+                try {
+                    var clsSel = '.btn, .button, .dropdown-toggle, .accordion-header, ' +
+                        '.accordion-button, .tab, .tab-item, .nav-link, .card-header, ' +
+                        '.list-group-item, .chip, .tag, .clickable, .selectable, .action-item';
+                    var clsEls = document.querySelectorAll(clsSel);
+                    for (var cl = 0; cl < clsEls.length; cl++) addEl(clsEls[cl], 'css-class');
+                } catch(e) {}
+
+                // Pass 4: React/Vue JS handler detection
+                try {
+                    var interactiveEls = document.querySelectorAll('div, span, li, td, label');
+                    for (var ri = 0; ri < interactiveEls.length && elements.length < MAX; ri++) {
+                        var riEl = interactiveEls[ri];
+                        var rect = riEl.getBoundingClientRect();
+                        if (rect.width < 10 || rect.height < 10 || rect.top > 5000) continue;
+                        var hasHandler = false;
+                        var keys = Object.keys(riEl);
+                        for (var rk = 0; rk < keys.length; rk++) {
+                            if (keys[rk].indexOf('__reactProps') === 0) {
+                                try { if (riEl[keys[rk]].onClick) { hasHandler = true; break; } } catch(e) {}
+                            }
+                        }
+                        if (!hasHandler && riEl._vei) {
+                            try { if (riEl._vei.onClick) hasHandler = true; } catch(e) {}
+                        }
+                        if (hasHandler) addEl(riEl, 'js-handler');
+                    }
+                } catch(e) {}
+
+                // Pass 5: cursor:pointer (catch-all)
+                var pointerEls = document.querySelectorAll('div, span, li, label, td, section');
+                for (var p = 0; p < pointerEls.length && elements.length < MAX; p++) {
                     var pel = pointerEls[p];
                     try {
                         if (window.getComputedStyle(pel).cursor !== 'pointer') continue;
                         if (pel.closest('a, button, [role="button"]')) continue;
-                        var pt = (pel.getAttribute('aria-label') || pel.innerText || '').trim().substring(0, 80);
-                        if (!pt || pt.length > 60 || seen.has(pt.toLowerCase())) continue;
-                        var pr = pel.getBoundingClientRect();
-                        if (pr.width < 5 || pr.height < 5) continue;
-                        seen.add(pt.toLowerCase());
-                        elements.push({selector: 'cursor:pointer', text: pt, tag: pel.tagName.toLowerCase()});
+                        addEl(pel, 'cursor:pointer');
                     } catch(e) {}
                 }
                 return elements;
