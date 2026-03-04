@@ -42,42 +42,50 @@ class ScreenshotManager:
             self._counter, path_part, title_part, SCREENSHOT_FORMAT
         )
 
-    def capture_page(self, driver, url, title, theme, browser_engine="playwright"):
-        """Full-page screenshot. Works with both Selenium (CDP) and Playwright."""
+    def capture_page(self, driver, url, title, theme, browser_engine="playwright",
+                     screenshot_mode="viewport"):
+        """Capture screenshot. Works with both Selenium (CDP) and Playwright.
+
+        screenshot_mode: "viewport" (visible area only) or "full_page" (scroll entire page).
+        """
         theme_dir = self._ensure_theme_dir(theme)
         filename = self._generate_filename(url, title)
         filepath = os.path.join(theme_dir, filename)
 
+        full_page = screenshot_mode == "full_page"
+
         if browser_engine == "playwright":
-            self._capture_playwright(driver, filepath)
+            self._capture_playwright(driver, filepath, full_page=full_page)
         else:
-            self._capture_selenium(driver, filepath)
+            self._capture_selenium(driver, filepath, full_page=full_page)
 
         return filepath
 
-    def _capture_playwright(self, page, filepath):
-        """Viewport screenshot via Playwright — single 1920×1080 screen."""
+    def _capture_playwright(self, page, filepath, full_page=False):
+        """Screenshot via Playwright."""
         try:
             page.screenshot(
                 path=filepath,
-                full_page=False,
+                full_page=full_page,
                 timeout=15000,
             )
             logger.info(
-                "  Screenshot saved (Playwright): {}".format(os.path.basename(filepath))
+                "  Screenshot saved (Playwright{}): {}".format(
+                    ", full page" if full_page else "", os.path.basename(filepath)
+                )
             )
         except Exception as e:
             logger.error("Playwright screenshot failed: {}".format(e))
 
-    def _capture_selenium(self, driver, filepath):
-        """Viewport screenshot via Selenium — single 1920×1080 screen."""
+    def _capture_selenium(self, driver, filepath, full_page=False):
+        """Screenshot via Selenium CDP."""
         try:
             result = driver.execute_cdp_cmd(
                 "Page.captureScreenshot",
                 {
                     "format": "png",
                     "fromSurface": True,
-                    "captureBeyondViewport": False,
+                    "captureBeyondViewport": full_page,
                 },
             )
 
@@ -85,7 +93,9 @@ class ScreenshotManager:
                 f.write(base64.b64decode(result["data"]))
 
             logger.info(
-                "  Screenshot saved (Selenium): {}".format(os.path.basename(filepath))
+                "  Screenshot saved (Selenium{}): {}".format(
+                    ", full page" if full_page else "", os.path.basename(filepath)
+                )
             )
 
         except Exception as e:

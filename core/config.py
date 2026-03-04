@@ -24,6 +24,9 @@ class AppConfig:
     login: str = ""
     password: str = ""
     browser_engine: str = "playwright"  # "playwright" or "selenium"
+    screenshot_mode: str = "viewport"  # "viewport" or "full_page"
+    viewport_width: int = 0  # custom viewport width (0 = use default 1920)
+    viewport_height: int = 0  # custom viewport height (0 = use default 1080)
     headless: bool = True
     verbose: bool = False
     # Profile persistence (Browser Use Cloud pattern)

@@ -149,6 +149,12 @@ class BrowserController:
             self.driver = None
             self._cdp_listener_active = False
 
+    def resize_viewport(self, width, height):
+        """Resize the browser window to the given dimensions."""
+        if self.driver:
+            self.driver.set_window_size(width, height)
+            logger.info("Window resized to {}x{}".format(width, height))
+
     # ── Profile persistence (Browser Use Cloud: Profile concept) ──
 
     def save_profile_state(self):
@@ -1510,8 +1516,10 @@ class BrowserController:
         version_main = _detect_chromium_version(chrome_bin)
 
         options = uc.ChromeOptions()
+        win_w = self.config.viewport_width or CHROME_WINDOW_WIDTH
+        win_h = self.config.viewport_height or CHROME_WINDOW_HEIGHT
         options.add_argument(
-            "--window-size={},{}".format(CHROME_WINDOW_WIDTH, CHROME_WINDOW_HEIGHT)
+            "--window-size={},{}".format(win_w, win_h)
         )
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")

@@ -115,9 +115,9 @@ class PlaywrightBrowserController:
 
         self._playwright = sync_playwright().start()
 
-        # Full HD viewport — exact 1920×1080
-        viewport_w = CHROME_WINDOW_WIDTH
-        viewport_h = CHROME_WINDOW_HEIGHT
+        # Use custom viewport if configured, otherwise Full HD 1920×1080
+        viewport_w = self.config.viewport_width or CHROME_WINDOW_WIDTH
+        viewport_h = self.config.viewport_height or CHROME_WINDOW_HEIGHT
 
         user_agent = random.choice(_USER_AGENTS)
 
@@ -239,6 +239,12 @@ class PlaywrightBrowserController:
         self._browser = None
         self._playwright = None
         self._network_listener_active = False
+
+    def resize_viewport(self, width, height):
+        """Resize the browser viewport to the given dimensions."""
+        if self.page:
+            self.page.set_viewport_size({"width": width, "height": height})
+            logger.info("Viewport resized to {}x{}".format(width, height))
 
     # ── Profile persistence ───────────────────────────────
 

@@ -7,6 +7,9 @@ class JobCreate(BaseModel):
     depth: int = 3
     model: str = "gpt-4.1"
     browser_engine: str = "playwright"  # "playwright" or "selenium"
+    screenshot_mode: str = "viewport"  # "viewport" or "full_page"
+    viewport_width: int | None = None  # custom viewport width (e.g. 375 for mobile)
+    viewport_height: int | None = None  # custom viewport height (e.g. 812 for mobile)
     target_login: str | None = None
     target_password: str | None = None
     profile_id: str | None = None  # UUID of BrowserProfile to restore login state
@@ -18,6 +21,9 @@ class JobResponse(BaseModel):
     depth: int
     model: str
     browser_engine: str = "playwright"
+    screenshot_mode: str = "viewport"
+    viewport_width: int | None = None
+    viewport_height: int | None = None
     status: str
     total_screenshots: int
     total_themes: int

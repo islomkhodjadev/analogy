@@ -1843,6 +1843,7 @@ class SiteAgent:
             title=state.get("title", "Untitled"),
             theme=theme,
             browser_engine=self.config.browser_engine,
+            screenshot_mode=self.config.screenshot_mode,
         )
 
         # Track parent for tree structure — the last page we screenshotted is the parent
