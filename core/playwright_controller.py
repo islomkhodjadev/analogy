@@ -254,6 +254,96 @@ class PlaywrightBrowserController:
                     _navPush('anchor.programmatic_click', this.href);
                     return origAClick.apply(this, arguments);
                 };
+
+                // ── history.back / forward / go ──
+                var origBack = history.back;
+                history.back = function() {
+                    _navPush('history.back', location.href);
+                    return origBack.apply(this, arguments);
+                };
+                var origForward = history.forward;
+                history.forward = function() {
+                    _navPush('history.forward', location.href);
+                    return origForward.apply(this, arguments);
+                };
+                var origGo = history.go;
+                history.go = function(delta) {
+                    _navPush('history.go', location.href);
+                    return origGo.apply(this, arguments);
+                };
+
+                // ── beforeunload (catches location.href=, document.location=) ──
+                window.addEventListener('beforeunload', function() {
+                    _navPush('beforeunload', location.href);
+                });
+
+                // ── meta refresh detection ──
+                var _metaObserver = new MutationObserver(function(mutations) {
+                    for (var m = 0; m < mutations.length; m++) {
+                        var nodes = mutations[m].addedNodes;
+                        for (var n = 0; n < nodes.length; n++) {
+                            var node = nodes[n];
+                            if (node.tagName === 'META' &&
+                                (node.getAttribute('http-equiv') || '').toLowerCase() === 'refresh') {
+                                var content = node.getAttribute('content') || '';
+                                var urlMatch = content.match(/url\s*=\s*['"]?([^'";\s]+)/i);
+                                if (urlMatch) _navPush('meta_refresh', urlMatch[1]);
+                            }
+                        }
+                    }
+                });
+                if (document.head) {
+                    _metaObserver.observe(document.head, {childList: true, subtree: true});
+                }
+
+                // ── iframe src change detection ──
+                try {
+                    var iframeSrcDesc = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'src');
+                    if (iframeSrcDesc && iframeSrcDesc.set) {
+                        var origIframeSrcSet = iframeSrcDesc.set;
+                        Object.defineProperty(HTMLIFrameElement.prototype, 'src', {
+                            set: function(val) {
+                                _navPush('iframe.src', val);
+                                return origIframeSrcSet.call(this, val);
+                            },
+                            get: iframeSrcDesc.get,
+                            configurable: true
+                        });
+                    }
+                } catch(e) {}
+
+                // ── dynamic link detection in drawers/modals/popups ──
+                var _modalObserver = new MutationObserver(function(mutations) {
+                    for (var m = 0; m < mutations.length; m++) {
+                        var nodes = mutations[m].addedNodes;
+                        for (var n = 0; n < nodes.length; n++) {
+                            var node = nodes[n];
+                            if (node.nodeType !== 1) continue;
+                            var isOverlay = false;
+                            try {
+                                var cl = (node.className || '').toLowerCase();
+                                var role = (node.getAttribute('role') || '').toLowerCase();
+                                isOverlay = role === 'dialog' || node.getAttribute('aria-modal') === 'true' ||
+                                    cl.indexOf('modal') !== -1 || cl.indexOf('drawer') !== -1 ||
+                                    cl.indexOf('popup') !== -1 || cl.indexOf('overlay') !== -1 ||
+                                    cl.indexOf('dropdown') !== -1;
+                            } catch(e) {}
+                            if (isOverlay) {
+                                var links = node.querySelectorAll('a[href]');
+                                for (var l = 0; l < links.length; l++) {
+                                    if (links[l].href) _navPush('dynamic_link', links[l].href);
+                                }
+                            }
+                        }
+                    }
+                });
+                if (document.body) {
+                    _modalObserver.observe(document.body, {childList: true, subtree: true});
+                } else {
+                    document.addEventListener('DOMContentLoaded', function() {
+                        _modalObserver.observe(document.body, {childList: true, subtree: true});
+                    });
+                }
             })();
         """
         )
