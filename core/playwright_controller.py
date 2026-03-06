@@ -183,6 +183,81 @@ class PlaywrightBrowserController:
         """
         )
 
+        # Universal navigation detection — intercepts all SPA/JS navigation APIs
+        self._context.add_init_script(
+            """
+            (function () {
+                window.__NAV_EVENTS__ = [];
+
+                function _navPush(type, url) {
+                    try {
+                        var resolved = url ? new URL(url, location.href).href : location.href;
+                        window.__NAV_EVENTS__.push({type: type, url: resolved, ts: Date.now()});
+                    } catch(e) {
+                        window.__NAV_EVENTS__.push({type: type, url: String(url), ts: Date.now()});
+                    }
+                }
+
+                // ── location navigation ──
+                var origAssign = window.location.assign;
+                window.location.assign = function(url) {
+                    _navPush('location.assign', url);
+                    return origAssign.apply(this, arguments);
+                };
+                var origReplace = window.location.replace;
+                window.location.replace = function(url) {
+                    _navPush('location.replace', url);
+                    return origReplace.apply(this, arguments);
+                };
+                var origOpen = window.open;
+                window.open = function(url) {
+                    _navPush('window.open', url);
+                    return origOpen.apply(this, arguments);
+                };
+
+                // ── history API (React Router, Next.js, Vue Router, etc.) ──
+                var origPushState = history.pushState;
+                history.pushState = function(state, title, url) {
+                    _navPush('history.pushState', url);
+                    return origPushState.apply(this, arguments);
+                };
+                var origReplaceState = history.replaceState;
+                history.replaceState = function(state, title, url) {
+                    _navPush('history.replaceState', url);
+                    return origReplaceState.apply(this, arguments);
+                };
+
+                // ── browser events ──
+                window.addEventListener('popstate', function() {
+                    _navPush('popstate', location.href);
+                });
+                window.addEventListener('hashchange', function() {
+                    _navPush('hashchange', location.href);
+                });
+
+                // ── anchor click detection ──
+                document.addEventListener('click', function(e) {
+                    var el = e.target;
+                    while (el && el.tagName !== 'A') { el = el.parentElement; }
+                    if (el && el.href) { _navPush('anchor_click', el.href); }
+                }, true);
+
+                // ── form submit detection ──
+                document.addEventListener('submit', function(e) {
+                    var form = e.target;
+                    if (form && form.action) { _navPush('form_submit', form.action); }
+                }, true);
+
+                // ── programmatic anchor click ──
+                var origAClick = HTMLAnchorElement.prototype.click;
+                HTMLAnchorElement.prototype.click = function() {
+                    _navPush('anchor.programmatic_click', this.href);
+                    return origAClick.apply(this, arguments);
+                };
+            })();
+        """
+        )
+
         self.page = self._context.new_page()
         self.page.set_default_timeout(REQUEST_TIMEOUT * 1000)
         self.page.set_default_navigation_timeout(REQUEST_TIMEOUT * 1000)
@@ -430,6 +505,46 @@ class PlaywrightBrowserController:
         if new_urls:
             logger.info("Network discovered {} internal URLs".format(len(new_urls)))
         return new_urls
+
+    # ── SPA navigation event detection ─────────────────────
+
+    def _collect_nav_events(self):
+        """Read and flush JS-intercepted navigation events.
+
+        Returns list of {type, url} dicts from the injected navigation
+        detection script. Also feeds valid same-domain URLs into
+        _discovered_urls for the crawler to pick up.
+        """
+        try:
+            events = self.page.evaluate(
+                """() => {
+                    var evts = window.__NAV_EVENTS__ || [];
+                    window.__NAV_EVENTS__ = [];
+                    return evts;
+                }"""
+            )
+            if events:
+                for evt in events:
+                    url = evt.get("url", "")
+                    if url and self._is_same_domain(url) and self._is_valid_page_url(url):
+                        self._discovered_urls.add(url)
+                logger.debug("Collected {} nav events: {}".format(
+                    len(events),
+                    ", ".join("{} -> {}".format(e.get("type", "?"), e.get("url", "?")[:60]) for e in events[:5])
+                ))
+            return events or []
+        except Exception:
+            return []
+
+    def _has_spa_navigation(self):
+        """Check if any SPA navigation events occurred since last flush."""
+        try:
+            count = self.page.evaluate(
+                "() => (window.__NAV_EVENTS__ || []).length"
+            )
+            return count > 0
+        except Exception:
+            return False
 
     # ── navigation ────────────────────────────────────────
 
@@ -1000,22 +1115,35 @@ class PlaywrightBrowserController:
         """Wait for navigation or SPA transition after a click.
 
         If the URL changed, wait for the new page to load.
-        If it didn't, give SPA routers a brief moment to update.
+        Also checks JS-intercepted navigation events to catch SPA
+        transitions (pushState/replaceState) that may not yet be
+        reflected in page.url.
         """
         try:
             # Brief wait for navigation to start
             time.sleep(0.3)
 
             url_after = self.page.url
+            spa_navigated = self._has_spa_navigation()
+
             if url_after != url_before:
-                # Navigation happened — wait for new page to fully load
+                # Full navigation happened — wait for new page to fully load
                 try:
                     self.page.wait_for_load_state("domcontentloaded", timeout=8000)
                 except Exception:
                     pass
                 self._wait_for_dom_stable(settle_time=0.8, max_wait=4)
+                # Flush nav events and feed URLs into discovered set
+                self._collect_nav_events()
+            elif spa_navigated:
+                # SPA navigation detected (pushState/replaceState/hashchange)
+                # but page.url may not have updated yet
+                nav_events = self._collect_nav_events()
+                spa_types = [e.get("type", "") for e in nav_events]
+                logger.info("SPA navigation detected: {}".format(", ".join(spa_types[:5])))
+                self._wait_for_dom_stable(settle_time=0.8, max_wait=3)
             else:
-                # No navigation — could be SPA or modal, brief wait for render
+                # No navigation — could be modal or DOM update, brief wait
                 self._wait_for_dom_stable(settle_time=0.5, max_wait=2)
         except Exception:
             time.sleep(0.5)
