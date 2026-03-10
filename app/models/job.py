@@ -27,6 +27,7 @@ class Job(Base):
     model = Column(String(100), default="gpt-4.1")
     browser_engine = Column(String(20), default="playwright")
     screenshot_mode = Column(String(20), default="viewport")
+    capture_mode = Column(String(20), default="smart")
     viewport_width = Column(Integer, nullable=True)
     viewport_height = Column(Integer, nullable=True)
     target_login = Column(String(255), nullable=True)

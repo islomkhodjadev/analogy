@@ -25,6 +25,7 @@ class AppConfig:
     password: str = ""
     browser_engine: str = "playwright"  # "playwright" or "selenium"
     screenshot_mode: str = "viewport"  # "viewport" or "full_page"
+    capture_mode: str = "smart"  # "smart" (diverse) or "exhaustive" (capture everything)
     viewport_width: int = 0  # custom viewport width (0 = use default 1920)
     viewport_height: int = 0  # custom viewport height (0 = use default 1080)
     headless: bool = True
@@ -44,21 +45,35 @@ class AppConfig:
             raise ValueError("Depth must be between 1 and {}".format(MAX_DEPTH))
 
     @property
+    def is_exhaustive(self):
+        return self.capture_mode == "exhaustive"
+
+    @property
     def max_pages(self):
+        if self.is_exhaustive:
+            return min(self.depth * 15, 200)
         return min(self.depth * 5, 50)
 
     @property
     def max_plan_pages(self):
+        if self.is_exhaustive:
+            return min(self.depth * 12, 150)
         return min(self.depth * 4, 30)
 
     @property
     def max_pages_per_theme(self):
+        if self.is_exhaustive:
+            return 999
         return max(2, self.depth)
 
     @property
     def max_ui_clicks_per_page(self):
+        if self.is_exhaustive:
+            return min(self.depth * 3, 15)
         return min(max(self.depth - 1, 0), 3)
 
     @property
     def max_discover_pages(self):
+        if self.is_exhaustive:
+            return min(self.depth * 10, 100)
         return 0 if self.depth == 1 else min(self.depth * 3, 25)

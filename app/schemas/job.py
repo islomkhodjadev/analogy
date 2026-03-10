@@ -8,6 +8,7 @@ class JobCreate(BaseModel):
     model: str = "gpt-4.1"
     browser_engine: str = "playwright"  # "playwright" or "selenium"
     screenshot_mode: str = "viewport"  # "viewport" or "full_page"
+    capture_mode: str = "smart"  # "smart" (diverse) or "exhaustive" (capture everything)
     viewport_width: int | None = None  # custom viewport width (e.g. 375 for mobile)
     viewport_height: int | None = None  # custom viewport height (e.g. 812 for mobile)
     target_login: str | None = None
@@ -22,6 +23,7 @@ class JobResponse(BaseModel):
     model: str
     browser_engine: str = "playwright"
     screenshot_mode: str = "viewport"
+    capture_mode: str = "smart"
     viewport_width: int | None = None
     viewport_height: int | None = None
     status: str

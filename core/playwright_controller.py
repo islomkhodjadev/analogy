@@ -1325,14 +1325,14 @@ class PlaywrightBrowserController:
             logger.warning("Page analysis failed: {}".format(e))
             return {}
 
-    @staticmethod
-    def _build_analysis_script_fn():
+    def _build_analysis_script_fn(self):
         """Return JS function body for page analysis.
 
         This is the same analysis logic as BrowserController._build_analysis_script
         but wrapped as a function that takes baseDomain as argument (for page.evaluate).
         """
-        return """(baseDomain) => {
+        exhaustive_flag = "true" if self.config.is_exhaustive else "false"
+        return "(baseDomain) => {\n        var _exhaustive = " + exhaustive_flag + ";\n" + """
         try {
             var result = {
                 navigation_links: [],
@@ -1348,7 +1348,8 @@ class PlaywrightBrowserController:
 
             // 1. Navigation links
             var anchors = document.querySelectorAll('a[href]');
-            for (var i = 0; i < anchors.length && result.navigation_links.length < 60; i++) {
+            var _navLimit = _exhaustive ? 200 : 60;
+            for (var i = 0; i < anchors.length && result.navigation_links.length < _navLimit; i++) {
                 var a = anchors[i];
                 var href = a.href;
                 if (!href) continue;
@@ -1358,7 +1359,7 @@ class PlaywrightBrowserController:
                     var ext = u.pathname.split('.').pop().toLowerCase();
                     var skipExt = ['png','jpg','jpeg','gif','svg','webp','ico','pdf','zip','mp4','mp3','css','js','json','woff','woff2'];
                     if (skipExt.indexOf(ext) !== -1) continue;
-                    if (u.origin + u.pathname === location.origin + location.pathname && u.hash) continue;
+                    if (!_exhaustive && u.origin + u.pathname === location.origin + location.pathname && u.hash) continue;
                     var path = u.pathname;
                     if (path.length > 1 && path.charAt(path.length - 1) === '/') {
                         path = path.substring(0, path.length - 1);
@@ -1386,7 +1387,7 @@ class PlaywrightBrowserController:
                 if (tag === 'a' || tag === 'script' || tag === 'style' || tag === 'html' || tag === 'body') return false;
                 var rect = el.getBoundingClientRect();
                 if (rect.width < 10 || rect.height < 10) return false;
-                if (rect.top > 5000) return false;
+                if (!_exhaustive && rect.top > 5000) return false;
                 if (el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
                 var style = window.getComputedStyle(el);
                 if (style.visibility === 'hidden' || style.display === 'none') return false;
@@ -1408,7 +1409,7 @@ class PlaywrightBrowserController:
                 return text.substring(0, 80);
             }
             function addClickable(el, reason) {
-                if (result.clickable_elements.length >= 100) return;
+                if (result.clickable_elements.length >= (_exhaustive ? 500 : 100)) return;
                 var text = getClickText(el);
                 if (!text) return;
                 var textKey = text.toLowerCase().substring(0, 40);
@@ -1667,13 +1668,14 @@ class PlaywrightBrowserController:
         - CSS class patterns (.btn, .dropdown-toggle, .accordion-header, etc.)
         - cursor:pointer elements (catch-all)
         """
+        exhaustive_flag = "true" if self.config.is_exhaustive else "false"
         try:
             return (
                 self.page.evaluate(
-                    """() => {
+                    "() => {\n                var _exhaustive = " + exhaustive_flag + ";\n" + """
                 var seen = new Set();
                 var elements = [];
-                var MAX = 80;
+                var MAX = _exhaustive ? 300 : 80;
 
                 function addEl(el, selector) {
                     if (elements.length >= MAX) return;
@@ -1681,7 +1683,7 @@ class PlaywrightBrowserController:
                     if (!text || seen.has(text.toLowerCase())) return;
                     var rect = el.getBoundingClientRect();
                     if (rect.width < 5 || rect.height < 5) return;
-                    if (rect.top > 5000) return;
+                    if (!_exhaustive && rect.top > 5000) return;
                     var style = window.getComputedStyle(el);
                     if (style.visibility === 'hidden' || style.display === 'none') return;
                     seen.add(text.toLowerCase());
@@ -1728,7 +1730,7 @@ class PlaywrightBrowserController:
                     for (var ri = 0; ri < interactiveEls.length && elements.length < MAX; ri++) {
                         var riEl = interactiveEls[ri];
                         var rect = riEl.getBoundingClientRect();
-                        if (rect.width < 10 || rect.height < 10 || rect.top > 5000) continue;
+                        if (rect.width < 10 || rect.height < 10 || (!_exhaustive && rect.top > 5000)) continue;
                         var hasHandler = false;
                         var keys = Object.keys(riEl);
                         for (var rk = 0; rk < keys.length; rk++) {

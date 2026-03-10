@@ -48,6 +48,19 @@ class SiteAgent:
         self.ai = AIAnalyzer(config)
         self.screenshot_mgr = ScreenshotManager(config)
         self.site_builder = SiteBuilder(config)
+
+        # Mode-aware limits
+        if config.is_exhaustive:
+            self._max_per_theme = 999
+            self._max_ui_interactions = 20
+            self._max_agent_steps = 500
+            self._max_clicks_per_page = 20
+        else:
+            self._max_per_theme = MAX_PER_THEME
+            self._max_ui_interactions = MAX_UI_INTERACTIONS_PER_PAGE
+            self._max_agent_steps = MAX_AGENT_STEPS
+            self._max_clicks_per_page = MAX_CLICKS_PER_PAGE
+
         self.captures = []
         self.captured_urls = set()
         self.visited_urls = set()
@@ -133,7 +146,7 @@ class SiteAgent:
             bfs_enqueued.add(landing_norm)
             bfs_enqueued.add(landing_norm.split("?")[0])
 
-            while step < MAX_AGENT_STEPS and len(self.captures) < max_pages:
+            while step < self._max_agent_steps and len(self.captures) < max_pages:
                 step += 1
 
                 # ── Time budget check ──
@@ -164,7 +177,7 @@ class SiteAgent:
                     )
 
                     title_is_new = True
-                    if current_title:
+                    if current_title and not self.config.is_exhaustive:
                         title_lower = current_title.lower()
                         for seen_key in self.screenshotted_titles:
                             if seen_key.startswith(title_lower + "::"):
@@ -612,7 +625,7 @@ class SiteAgent:
                 for t, n in sorted(self.theme_counts.items(), key=lambda x: -x[1])
             )
             captures_summary += "\n\nTHEME COUNTS: {}".format(theme_dist)
-            overused = [t for t, n in self.theme_counts.items() if n >= MAX_PER_THEME]
+            overused = [t for t, n in self.theme_counts.items() if n >= self._max_per_theme]
             if overused:
                 captures_summary += "\nFULL THEMES (do NOT add more): {}".format(
                     ", ".join(overused)
@@ -822,11 +835,25 @@ class SiteAgent:
                         overlays++;
                     }
                 }
+                // Count hidden elements (CSS visibility toggles)
+                var hidden = 0;
+                for (var h = 0; h < all.length; h++) {
+                    var hs = window.getComputedStyle(all[h]);
+                    if (hs.display === 'none' || hs.visibility === 'hidden' || hs.opacity === '0') hidden++;
+                }
+                // Count active/selected states (tab switches, accordion)
+                var activeEls = document.querySelectorAll('.active, .selected, [aria-selected="true"], [aria-expanded="true"], [data-state="open"]');
+                var activeCount = activeEls.length;
+                // Scroll position
+                var scrollY = window.scrollY || document.documentElement.scrollTop || 0;
                 return {
                     total: all.length,
                     visible: visible,
                     overlays: overlays,
-                    text: textSnap
+                    text: textSnap,
+                    hidden: hidden,
+                    activeCount: activeCount,
+                    scrollY: scrollY
                 };
             })()"""
             )
@@ -847,12 +874,19 @@ class SiteAgent:
         if after.get("overlays", 0) > before.get("overlays", 0):
             return True
 
+        # Thresholds: lower in exhaustive mode to catch subtler changes
+        exhaustive = self.config.is_exhaustive
+        ratio_threshold = 0.02 if exhaustive else 0.05
+        count_threshold = 3 if exhaustive else 10
+        vis_ratio_threshold = 0.03 if exhaustive else 0.08
+        vis_count_threshold = 5 if exhaustive else 15
+
         # Significant element count change (content appeared/disappeared)
         total_before = before.get("total", 0)
         total_after = after.get("total", 0)
         if total_before > 0:
             change_ratio = abs(total_after - total_before) / max(total_before, 1)
-            if change_ratio > 0.05 and abs(total_after - total_before) > 10:
+            if change_ratio > ratio_threshold and abs(total_after - total_before) > count_threshold:
                 return True
 
         # Visible element count changed significantly
@@ -860,8 +894,26 @@ class SiteAgent:
         vis_after = after.get("visible", 0)
         if vis_before > 0:
             vis_change = abs(vis_after - vis_before) / max(vis_before, 1)
-            if vis_change > 0.08 and abs(vis_after - vis_before) > 15:
+            if vis_change > vis_ratio_threshold and abs(vis_after - vis_before) > vis_count_threshold:
                 return True
+
+        # Hidden element count changed (CSS visibility toggle)
+        hidden_before = before.get("hidden", 0)
+        hidden_after = after.get("hidden", 0)
+        if abs(hidden_after - hidden_before) > 3:
+            return True
+
+        # Active/selected state count changed (tab switch, accordion)
+        active_before = before.get("activeCount", 0)
+        active_after = after.get("activeCount", 0)
+        if active_before != active_after:
+            return True
+
+        # Scroll position changed significantly (smooth scroll to section)
+        scroll_before = before.get("scrollY", 0)
+        scroll_after = after.get("scrollY", 0)
+        if abs(scroll_after - scroll_before) > 300:
+            return True
 
         # Text content changed significantly (tab switch, accordion expand)
         text_before = before.get("text", "")
@@ -871,7 +923,8 @@ class SiteAgent:
             if text_before[:200] != text_after[:200]:
                 return True
             # Check if significant new text appeared
-            if len(text_after) > len(text_before) + 100:
+            text_diff = 50 if exhaustive else 100
+            if len(text_after) > len(text_before) + text_diff:
                 return True
 
         return False
@@ -1022,7 +1075,7 @@ class SiteAgent:
 
         # Sort: tabs first, then expandables, then keyword buttons, then other buttons
         candidates.sort(key=lambda x: x["priority"])
-        candidates = candidates[:MAX_UI_INTERACTIONS_PER_PAGE]
+        candidates = candidates[:self._max_ui_interactions]
 
         logger.info(
             "  Exploring {} UI triggers: {}".format(
@@ -1251,8 +1304,9 @@ class SiteAgent:
 
         # Use AI to filter links when there are many candidates
         # (likely a marketplace/catalog with many same-template pages)
+        # In exhaustive mode, skip AI filtering — enqueue everything
         ai_filtered_urls = None
-        if len(candidate_infos) > 8:
+        if len(candidate_infos) > 8 and not self.config.is_exhaustive:
             try:
                 ai_filtered_urls = set(
                     self.ai.filter_links_by_ui_diversity(
@@ -1298,10 +1352,10 @@ class SiteAgent:
         so that pages captured in earlier iterations are respected.
         Returns True if successfully navigated to a new page.
         """
-        full_themes = {
+        full_themes = set() if self.config.is_exhaustive else {
             t.lower().replace(" ", "-").replace("_", "-")
             for t, c in self.theme_counts.items()
-            if c >= MAX_PER_THEME
+            if c >= self._max_per_theme
         }
 
         skipped = 0
@@ -1326,6 +1380,7 @@ class SiteAgent:
                 skipped += 1
                 continue
             # Skip path-similar (same template, different ID)
+            # In exhaustive mode, _is_path_similar_to_captured always returns False
             next_path = urlparse(next_url).path.rstrip("/")
             if next_path and self._is_path_similar_to_captured(next_path):
                 self.screenshotted_urls.add(next_norm)
@@ -1490,10 +1545,10 @@ class SiteAgent:
         except Exception:
             pass
 
-        # Build set of themes that are already full (at MAX_PER_THEME)
+        # Build set of themes that are already full (at theme cap)
         full_themes = set()
         for t, count in self.theme_counts.items():
-            if count >= MAX_PER_THEME:
+            if count >= self._max_per_theme:
                 full_themes.add(t.lower().replace(" ", "-").replace("_", "-"))
 
         candidates = []
@@ -1562,7 +1617,11 @@ class SiteAgent:
 
         Returns True if a sibling or cousin path was already captured,
         meaning this is likely the same page template.
+
+        In exhaustive mode, always returns False — capture everything.
         """
+        if self.config.is_exhaustive:
+            return False
         if not self.screenshotted_paths:
             return False
 
@@ -1656,8 +1715,20 @@ class SiteAgent:
         - Very deep paths with multiple numeric IDs (likely modal details)
         - API/data endpoints (.json, .xml, /api/)
         - Toggle/sort/destroy action endpoints
+
+        In exhaustive mode, only blocks truly non-page URLs (API, data, destructive).
         """
         path = urlparse(url).path.lower().rstrip("/")
+
+        # Always block: API/data endpoints regardless of mode
+        _ALWAYS_BLOCK = (".json", ".xml", ".csv", "/api/", "/_api/", "/destroy", "/toggle", "/sort", "/reorder")
+        for pattern in _ALWAYS_BLOCK:
+            if pattern in path:
+                return True
+
+        # In exhaustive mode, allow everything else (new, edit, preview, etc.)
+        if self.config.is_exhaustive:
+            return False
 
         # URLs ending in /new, /edit, /preview are typically Rails modal/turbo-stream endpoints
         last_segment = path.rsplit("/", 1)[-1] if "/" in path else path
@@ -1822,7 +1893,7 @@ class SiteAgent:
         )
 
         should_block_on_title = False
-        if title_key and title_key in self.screenshotted_titles and not is_ui_state:
+        if title_key and title_key in self.screenshotted_titles and not is_ui_state and not self.config.is_exhaustive:
             # If title is short/generic ("Home", "Dashboard", "My Site"), allow duplicates if URL differs
             is_generic = len(page_title) < 15 or page_title.lower() in (
                 "home",
@@ -1855,9 +1926,11 @@ class SiteAgent:
             t_normalized = t.lower().replace(" ", "-").replace("_", "-")
             if t_normalized == theme_normalized:
                 current_theme_count += count
-        if current_theme_count >= MAX_PER_THEME:
+        if current_theme_count >= self._max_per_theme:
             # Still allow if this is a UI-state screenshot (modal, etc.)
-            if is_ui_state:
+            if self.config.is_exhaustive:
+                pass  # No theme cap in exhaustive mode
+            elif is_ui_state:
                 pass  # Always allow UI state captures
             elif not any(
                 word in desc_lower
@@ -1878,7 +1951,7 @@ class SiteAgent:
                     "screenshot_skip",
                     url,
                     "Theme '{}' already has {} captures (max {})".format(
-                        theme, current_theme_count, MAX_PER_THEME
+                        theme, current_theme_count, self._max_per_theme
                     ),
                 )
                 logger.info(
@@ -1896,8 +1969,11 @@ class SiteAgent:
         # Also check with stripped query params
         base_key = "{}::{}".format(normalized.split("?")[0], theme)
         if capture_key in self.captured_urls or base_key in self.captured_urls:
+            # In exhaustive mode, allow all captures
+            if self.config.is_exhaustive:
+                pass  # Bypass URL+theme dedup
             # Always allow UI state captures (same URL, different state)
-            if is_ui_state:
+            elif is_ui_state:
                 pass  # Bypass URL+theme dedup for UI states
             # Still allow if the description mentions a UI state change
             elif not any(
@@ -2138,15 +2214,17 @@ class SiteAgent:
             return False
 
         # Block wasteful clicks at agent level (backup for AI prompt)
+        # In exhaustive mode, allow sort/filter/pagination clicks
         text_lower = click_text.strip().lower()
-        for pattern in self._WASTE_CLICK_PATTERNS:
-            if pattern in text_lower:
-                self._record_action(
-                    "click_skip",
-                    click_text,
-                    "Blocked: wasteful UI control ({})".format(pattern),
-                )
-                return True
+        if not self.config.is_exhaustive:
+            for pattern in self._WASTE_CLICK_PATTERNS:
+                if pattern in text_lower:
+                    self._record_action(
+                        "click_skip",
+                        click_text,
+                        "Blocked: wasteful UI control ({})".format(pattern),
+                    )
+                    return True
 
         # Block dangerous/destructive clicks (protect prod data)
         for pattern in self._DANGEROUS_CLICK_PATTERNS:

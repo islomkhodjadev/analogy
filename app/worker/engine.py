@@ -108,6 +108,7 @@ def run_agent_for_job(db: Session, job, openai_api_key: str) -> dict:
         password=password,
         browser_engine=getattr(job, "browser_engine", None) or "playwright",
         screenshot_mode=getattr(job, "screenshot_mode", None) or "viewport",
+        capture_mode=getattr(job, "capture_mode", None) or "smart",
         viewport_width=getattr(job, "viewport_width", None) or 0,
         viewport_height=getattr(job, "viewport_height", None) or 0,
         headless=os.environ.get("HEADLESS", "true").lower() != "false",

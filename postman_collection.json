@@ -217,14 +217,14 @@
 						"header": [{ "key": "Content-Type", "value": "application/json" }],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"url\": \"https://example.com\",\n    \"depth\": 3,\n    \"model\": \"gpt-4.1\",\n    \"browser_engine\": \"playwright\",\n    \"target_login\": null,\n    \"target_password\": null,\n    \"profile_id\": null\n}"
+							"raw": "{\n    \"url\": \"https://example.com\",\n    \"depth\": 3,\n    \"model\": \"gpt-4.1\",\n    \"browser_engine\": \"playwright\",\n    \"screenshot_mode\": \"viewport\",\n    \"capture_mode\": \"smart\",\n    \"target_login\": null,\n    \"target_password\": null,\n    \"profile_id\": null\n}"
 						},
 						"url": {
 							"raw": "{{base_url}}/jobs",
 							"host": ["{{base_url}}"],
 							"path": ["jobs"]
 						},
-						"description": "Create a new screenshot job. Depth 1-10 controls how many pages to capture. Set browser_engine to 'playwright' (default) or 'selenium'. Job ID is auto-saved."
+						"description": "Create a new screenshot job. Depth 1-10 controls how many pages to capture.\n\nOptions:\n- browser_engine: 'playwright' (default) or 'selenium'\n- screenshot_mode: 'viewport' (default) or 'full_page'\n- capture_mode: 'smart' (diverse page types) or 'exhaustive' (every page & click)\n\nJob ID is auto-saved."
 					},
 					"response": []
 				},
@@ -249,7 +249,7 @@
 						"header": [{ "key": "Content-Type", "value": "application/json" }],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"url\": \"https://example.com/login\",\n    \"depth\": 5,\n    \"model\": \"gpt-4.1\",\n    \"browser_engine\": \"playwright\",\n    \"target_login\": \"admin@example.com\",\n    \"target_password\": \"secretpassword\",\n    \"profile_id\": null\n}"
+							"raw": "{\n    \"url\": \"https://example.com/login\",\n    \"depth\": 5,\n    \"model\": \"gpt-4.1\",\n    \"browser_engine\": \"playwright\",\n    \"screenshot_mode\": \"viewport\",\n    \"capture_mode\": \"smart\",\n    \"target_login\": \"admin@example.com\",\n    \"target_password\": \"secretpassword\",\n    \"profile_id\": null\n}"
 						},
 						"url": {
 							"raw": "{{base_url}}/jobs",
@@ -281,7 +281,7 @@
 						"header": [{ "key": "Content-Type", "value": "application/json" }],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"url\": \"https://example.com\",\n    \"depth\": 3,\n    \"model\": \"gpt-4.1\",\n    \"browser_engine\": \"selenium\",\n    \"target_login\": null,\n    \"target_password\": null,\n    \"profile_id\": null\n}"
+							"raw": "{\n    \"url\": \"https://example.com\",\n    \"depth\": 3,\n    \"model\": \"gpt-4.1\",\n    \"browser_engine\": \"selenium\",\n    \"screenshot_mode\": \"viewport\",\n    \"capture_mode\": \"smart\",\n    \"target_login\": null,\n    \"target_password\": null,\n    \"profile_id\": null\n}"
 						},
 						"url": {
 							"raw": "{{base_url}}/jobs",
@@ -289,6 +289,134 @@
 							"path": ["jobs"]
 						},
 						"description": "Create a screenshot job using the Selenium/undetected-chromedriver engine instead of the default Playwright."
+					},
+					"response": []
+				},
+				{
+					"name": "Create Job (Exhaustive)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    var jsonData = pm.response.json();",
+									"    pm.collectionVariables.set('job_id', jsonData.id);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"url\": \"https://example.com\",\n    \"depth\": 5,\n    \"model\": \"gpt-4.1\",\n    \"browser_engine\": \"playwright\",\n    \"screenshot_mode\": \"viewport\",\n    \"capture_mode\": \"exhaustive\",\n    \"target_login\": null,\n    \"target_password\": null,\n    \"profile_id\": null\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/jobs",
+							"host": ["{{base_url}}"],
+							"path": ["jobs"]
+						},
+						"description": "Create a job in EXHAUSTIVE capture mode.\n\nExhaustive mode captures EVERY reachable page and UI state:\n- Visits all categories, products, blog posts (not just 1 of each type)\n- Clicks every interactive element (tabs, dropdowns, modals, accordions)\n- Captures sort/filter/pagination results\n- Follows hash (#) navigation links\n- No theme caps, no path-similarity skipping, no diversity filtering\n- Up to 200 screenshots (vs 50 in smart mode)\n\nUse higher depth (5-10) for maximum coverage."
+					},
+					"response": []
+				},
+				{
+					"name": "Create Job (Exhaustive + Full Page)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    var jsonData = pm.response.json();",
+									"    pm.collectionVariables.set('job_id', jsonData.id);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"url\": \"https://example.com\",\n    \"depth\": 5,\n    \"model\": \"gpt-4.1\",\n    \"browser_engine\": \"playwright\",\n    \"screenshot_mode\": \"full_page\",\n    \"capture_mode\": \"exhaustive\",\n    \"target_login\": null,\n    \"target_password\": null,\n    \"profile_id\": null\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/jobs",
+							"host": ["{{base_url}}"],
+							"path": ["jobs"]
+						},
+						"description": "Create a job in EXHAUSTIVE mode with FULL PAGE screenshots.\n\nCombines exhaustive capture (every page & click) with full-page scrolling screenshots that capture the entire page content, not just the viewport."
+					},
+					"response": []
+				},
+				{
+					"name": "Create Job (Exhaustive + Login)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    var jsonData = pm.response.json();",
+									"    pm.collectionVariables.set('job_id', jsonData.id);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"url\": \"https://example.com/login\",\n    \"depth\": 7,\n    \"model\": \"gpt-4.1\",\n    \"browser_engine\": \"playwright\",\n    \"screenshot_mode\": \"viewport\",\n    \"capture_mode\": \"exhaustive\",\n    \"target_login\": \"admin@example.com\",\n    \"target_password\": \"secretpassword\",\n    \"profile_id\": null\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/jobs",
+							"host": ["{{base_url}}"],
+							"path": ["jobs"]
+						},
+						"description": "Create an exhaustive capture job for an authenticated site.\n\nLogs in first, then exhaustively captures every page and UI state behind auth. Use depth 7+ for deep coverage of admin panels, dashboards, and settings pages."
+					},
+					"response": []
+				},
+				{
+					"name": "Create Job (Mobile Viewport)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    var jsonData = pm.response.json();",
+									"    pm.collectionVariables.set('job_id', jsonData.id);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"url\": \"https://example.com\",\n    \"depth\": 3,\n    \"model\": \"gpt-4.1\",\n    \"browser_engine\": \"playwright\",\n    \"screenshot_mode\": \"viewport\",\n    \"capture_mode\": \"smart\",\n    \"viewport_width\": 375,\n    \"viewport_height\": 812,\n    \"target_login\": null,\n    \"target_password\": null,\n    \"profile_id\": null\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/jobs",
+							"host": ["{{base_url}}"],
+							"path": ["jobs"]
+						},
+						"description": "Create a job with mobile viewport (iPhone size 375x812).\n\nCaptures the mobile-responsive version of the site. Combine with capture_mode 'exhaustive' for full mobile coverage."
 					},
 					"response": []
 				},
@@ -486,7 +614,7 @@
 						"header": [{ "key": "Content-Type", "value": "application/json" }],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"url\": \"https://example.com\",\n    \"depth\": 3,\n    \"model\": \"gpt-4.1\",\n    \"browser_engine\": \"playwright\",\n    \"profile_id\": \"{{profile_id}}\"\n}"
+							"raw": "{\n    \"url\": \"https://example.com\",\n    \"depth\": 3,\n    \"model\": \"gpt-4.1\",\n    \"browser_engine\": \"playwright\",\n    \"screenshot_mode\": \"viewport\",\n    \"capture_mode\": \"smart\",\n    \"profile_id\": \"{{profile_id}}\"\n}"
 						},
 						"url": {
 							"raw": "{{base_url}}/jobs",

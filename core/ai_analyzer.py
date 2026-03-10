@@ -64,11 +64,7 @@ Respond with ONLY a JSON object:
 }}
 
 RULES:
-- MAX {max_pages} pages total. Pick the most important and diverse ones.
-- Include MULTIPLE examples of key page types to show variety:
-  - 2-3 different category pages to show different layouts/content
-  - 2-3 different product/detail pages to show variety
-  - 2-3 blog posts if they exist (different topics/formats)
+- MAX {max_pages} pages total.{exhaustive_rules}
 - Include ALL structurally different pages: homepage sections, about, contact, \
 blog listing, blog posts, products, categories, legal, pricing, FAQ, settings, \
 dashboard, profile, search results, etc.
@@ -77,16 +73,36 @@ dashboard, profile, search results, etc.
 - Do NOT include file links (images, PDFs, etc)
 - Only include URLs you actually see in the links list — do NOT invent URLs
 - Aim to fill the {max_pages} page budget — more pages = better coverage""".format(
-            url=url, html=html[:12000], links=links_summary, max_pages=max_pages
+            url=url,
+            html=html[:12000],
+            links=links_summary,
+            max_pages=max_pages,
+            exhaustive_rules=(
+                "\n- Include EVERY page you can find. Every category, every product, "
+                "every section, every sub-page. The goal is TOTAL coverage, not diversity."
+                "\n- Include ALL category pages, ALL product pages, ALL blog posts."
+                "\n- Include pages with hash (#) navigation if they show different content."
+            ) if self.config.is_exhaustive else (
+                " Pick the most important and diverse ones."
+                "\n- Include MULTIPLE examples of key page types to show variety:"
+                "\n  - 2-3 different category pages to show different layouts/content"
+                "\n  - 2-3 different product/detail pages to show variety"
+                "\n  - 2-3 blog posts if they exist (different topics/formats)"
+            ),
         )
 
         response = self._call_openai(
             prompt,
             system=(
                 "You plan thorough website screenshot captures. "
-                "MAX {} pages. Include multiple examples of important page types. "
+                "MAX {} pages. {} "
                 "Cover every section of the site. "
-                "Respond with valid JSON only.".format(max_pages)
+                "Respond with valid JSON only.".format(
+                    max_pages,
+                    "Include EVERY reachable page. Be exhaustive, not selective."
+                    if self.config.is_exhaustive
+                    else "Include multiple examples of important page types."
+                )
             ),
         )
         return self._parse_json_response(response)
@@ -695,7 +711,7 @@ Respond with ONLY a JSON object:
                 )
 
         click_budget_warning = ""
-        if clicks_on_current_page >= 3:
+        if clicks_on_current_page >= 3 and not self.config.is_exhaustive:
             click_budget_warning = (
                 "\n!! You have already clicked {} elements on THIS page. "
                 "STOP clicking and NAVIGATE to a different page instead. "
@@ -735,70 +751,36 @@ RECENT HISTORY (last actions):
 1. PRIORITY ORDER:
    a) If login form visible and not logged in → use "login" action
    b) If current view shows a NEW UI state (e.g. open modal, dropdown) → use "screenshot"
-   c) NAVIGATE to a page of a DIFFERENT TYPE than what you've already captured
+   c) NAVIGATE to a page {nav_goal}
    d) Click interactive elements that reveal NEW UI states (hamburger menus, tabs,
       dropdowns, modals, accordions)
    e) If nothing new remains → "done"
 
-2. PAGE TYPE DIVERSITY (MOST IMPORTANT RULE):
-   - The goal is to capture every DIFFERENT page template/type on the site.
-   - A UI/UX designer needs to see: homepage, category listing, product/detail page,
-     about page, contact page, login/register, blog listing, blog post, FAQ, legal,
-     pricing, cart, checkout, profile, settings, search results, error page.
-   - Each page TYPE needs only 1-2 examples. NEVER capture 3+ pages of the same type.
-   - Category pages all look the SAME — one category screenshot is enough.
-   - Product detail pages all look the SAME — one product screenshot is enough.
-   - Check THEME COUNTS in the captures summary. If a theme has 2+, STOP adding to it.
-   - WRONG: Electronics → Phones → Phone Detail → Laptops → Laptop Detail (5 similar pages)
-   - CORRECT: Electronics (1 category) → Phone Detail (1 detail) → About → Contact → Blog
+2. {coverage_rule}
 
 3. INTERACTION RULES:
    - For 'click', use the EXACT text shown in the 'INTERACTIVE ELEMENTS' list.
    - For 'navigate', use the EXACT URL shown in the 'LINKS' list.
    - Do NOT guess element IDs or classes. Only use what is provided.
-   - Do NOT click sort/order controls, pagination, or "show more".
-   - Do NOT click links that just add query parameters (?sort=price).
+   {click_restrictions}
    - SAFETY: NEVER click "Delete", "Remove", "Save", "Submit", "Confirm",
      "Approve", "Reject", "Send", "Publish", "Archive", "Deactivate",
      "Transfer", "Assign", or "Update" buttons. These modify production data.
    - You may OPEN a modal (e.g. click "Edit" or "Create") to screenshot it,
      but NEVER click the confirm/save/submit button INSIDE that modal.
 
-4. WHAT TO EXPLORE (in this priority order):
-   a) Homepage (if not captured)
-   b) One category/listing page
-   c) One product/detail/item page
-   d) About / Company page
-   e) Contact / Support page
-   f) Blog listing + one blog post
-   g) Login / Register form
-   h) FAQ / Help center
-   i) Legal / Privacy / Terms
-   j) Pricing / Plans page
-   k) Search results page
-   l) Cart / Checkout (if accessible)
-   m) Profile / Settings / Dashboard
-   n) Interactive UI states: open modal, hamburger menu, tabs, dropdowns
+4. WHAT TO EXPLORE:
+   {explore_list}
    - After clicking a tab or opening a modal, ALWAYS follow with 'screenshot'
 
 5. NAVIGATION STRATEGY:
-   - Look at THEME COUNTS. Go to the page type you have ZERO captures of.
-   - After capturing any category or listing, immediately leave to a DIFFERENT section.
-   - Use the footer links — they often contain About, Contact, Legal, FAQ.
-   - Use the header nav — it has the main sections.
-   - NEVER drill deeper into subcategories. One level is enough.
+   {nav_strategy}
 
 6. EFFICIENCY:
-   - You have a BUDGET of {max_captures} screenshots. Fill it with DIVERSE pages.
-   - Navigate to the MOST different section from what you've already captured.
-   - If you see FULL THEMES in the captures summary, those are done. Move on.
+   - You have a BUDGET of {max_captures} screenshots. {efficiency_goal}
 
 7. WHEN TO SAY "done":
-   - ONLY say "done" if you've captured at least 75% of the max ({min_done} screenshots)
-     OR there are truly no more unexplored page TYPES left
-   - If you have fewer than {min_done} captures, keep exploring — find pages of
-     DIFFERENT types, not more of the same type
-   - Explore: account pages, settings, help/FAQ, legal pages, contact, about, blog
+   {done_rule}
 
 Respond with ONLY JSON:
 {{
@@ -826,11 +808,122 @@ Respond with ONLY JSON:
             history=history or "(none)",
             max_captures=max_captures,
             min_done=max(3, int(max_captures * 0.75)),
+            # Mode-aware prompt sections
+            nav_goal=(
+                "you haven't visited yet — visit EVERY page"
+                if self.config.is_exhaustive
+                else "of a DIFFERENT TYPE than what you've already captured"
+            ),
+            coverage_rule=(
+                "EXHAUSTIVE COVERAGE (MOST IMPORTANT RULE):\n"
+                "   - The goal is to capture EVERY reachable page on the site.\n"
+                "   - Visit EVERY category, EVERY product, EVERY section, EVERY sub-page.\n"
+                "   - Do NOT skip pages just because they look similar to ones already captured.\n"
+                "   - Click EVERY interactive element: tabs, accordions, dropdowns, modals, filters, sorts, pagination.\n"
+                "   - After each click that changes the UI, take a screenshot.\n"
+                "   - Explore ALL navigation links including hash (#) links and SPA routes.\n"
+                "   - The more screenshots, the better. Aim for TOTAL coverage."
+                if self.config.is_exhaustive
+                else (
+                    "PAGE TYPE DIVERSITY (MOST IMPORTANT RULE):\n"
+                    "   - The goal is to capture every DIFFERENT page template/type on the site.\n"
+                    "   - A UI/UX designer needs to see: homepage, category listing, product/detail page,\n"
+                    "     about page, contact page, login/register, blog listing, blog post, FAQ, legal,\n"
+                    "     pricing, cart, checkout, profile, settings, search results, error page.\n"
+                    "   - Each page TYPE needs only 1-2 examples. NEVER capture 3+ pages of the same type.\n"
+                    "   - Category pages all look the SAME — one category screenshot is enough.\n"
+                    "   - Product detail pages all look the SAME — one product screenshot is enough.\n"
+                    "   - Check THEME COUNTS in the captures summary. If a theme has 2+, STOP adding to it.\n"
+                    "   - WRONG: Electronics > Phones > Phone Detail > Laptops > Laptop Detail (5 similar pages)\n"
+                    "   - CORRECT: Electronics (1 category) > Phone Detail (1 detail) > About > Contact > Blog"
+                )
+            ),
+            click_restrictions=(
+                "- Click sort, filter, pagination, 'show more' — each reveals different content worth capturing."
+                if self.config.is_exhaustive
+                else (
+                    "- Do NOT click sort/order controls, pagination, or 'show more'.\n"
+                    "   - Do NOT click links that just add query parameters (?sort=price)."
+                )
+            ),
+            explore_list=(
+                "   a) Homepage (if not captured)\n"
+                "   b) EVERY category/listing page — visit ALL of them\n"
+                "   c) EVERY product/detail/item page — visit ALL of them\n"
+                "   d) ALL informational pages: About, Contact, Blog, FAQ, Legal, Pricing\n"
+                "   e) ALL interactive UI states: every modal, tab, dropdown, accordion, menu\n"
+                "   f) ALL filter/sort variations\n"
+                "   g) ALL pagination pages\n"
+                "   h) Hash (#) navigation links that show different content\n"
+                "   i) Login / Register forms\n"
+                "   j) Profile / Settings / Dashboard pages"
+                if self.config.is_exhaustive
+                else (
+                    "   (in priority order)\n"
+                    "   a) Homepage (if not captured)\n"
+                    "   b) One category/listing page\n"
+                    "   c) One product/detail/item page\n"
+                    "   d) About / Company page\n"
+                    "   e) Contact / Support page\n"
+                    "   f) Blog listing + one blog post\n"
+                    "   g) Login / Register form\n"
+                    "   h) FAQ / Help center\n"
+                    "   i) Legal / Privacy / Terms\n"
+                    "   j) Pricing / Plans page\n"
+                    "   k) Search results page\n"
+                    "   l) Cart / Checkout (if accessible)\n"
+                    "   m) Profile / Settings / Dashboard\n"
+                    "   n) Interactive UI states: open modal, hamburger menu, tabs, dropdowns"
+                )
+            ),
+            nav_strategy=(
+                "- Visit EVERY link you can find. Do not skip any.\n"
+                "   - Explore all sub-pages, not just top-level navigation.\n"
+                "   - Click through pagination to see all pages.\n"
+                "   - Use both header, sidebar, and footer navigation.\n"
+                "   - Follow internal links within page content too."
+                if self.config.is_exhaustive
+                else (
+                    "- Look at THEME COUNTS. Go to the page type you have ZERO captures of.\n"
+                    "   - After capturing any category or listing, immediately leave to a DIFFERENT section.\n"
+                    "   - Use the footer links — they often contain About, Contact, Legal, FAQ.\n"
+                    "   - Use the header nav — it has the main sections.\n"
+                    "   - NEVER drill deeper into subcategories. One level is enough."
+                )
+            ),
+            efficiency_goal=(
+                "Fill it with as many screenshots as possible. Every page matters."
+                if self.config.is_exhaustive
+                else "Fill it with DIVERSE pages.\n   - Navigate to the MOST different section from what you've already captured.\n   - If you see FULL THEMES in the captures summary, those are done. Move on."
+            ),
+            done_rule=(
+                "- ONLY say 'done' when there are truly NO MORE pages or links left to visit.\n"
+                "   - If there are still unvisited links, keep going.\n"
+                "   - If there are still unclicked interactive elements, click them.\n"
+                "   - Never stop early — exhaust all possibilities."
+                if self.config.is_exhaustive
+                else (
+                    "- ONLY say 'done' if you've captured at least 75% of the max ({min_done} screenshots)\n"
+                    "     OR there are truly no more unexplored page TYPES left\n"
+                    "   - If you have fewer than {min_done} captures, keep exploring — find pages of\n"
+                    "     DIFFERENT types, not more of the same type\n"
+                    "   - Explore: account pages, settings, help/FAQ, legal pages, contact, about, blog"
+                ).format(min_done=max(3, int(max_captures * 0.75)))
+            ),
         )
 
-        response = self._call_openai(
-            prompt,
-            system=(
+        if self.config.is_exhaustive:
+            system_msg = (
+                "You are a thorough web browsing agent that explores websites EXHAUSTIVELY. "
+                "Your PRIMARY GOAL is to capture EVERY reachable page and UI state on the site. "
+                "Visit every category, every product, every section. Click every interactive element. "
+                "Take a screenshot after every navigation and every UI change. "
+                "Never skip a page because it looks similar. More screenshots = better. "
+                "If credentials are available and a login form is visible, you ALWAYS log in first. "
+                "Respond with valid JSON only."
+            )
+        else:
+            system_msg = (
                 "You are a smart web browsing agent that explores websites like a REAL HUMAN USER. "
                 "Your PRIMARY GOAL is to capture every DIFFERENT page type/template on the site. "
                 "You NEVER capture multiple pages of the same type (e.g., multiple category listings). "
@@ -838,8 +931,9 @@ Respond with ONLY JSON:
                 "You prioritize structural diversity: homepage, listing, detail, about, contact, blog, legal, profile. "
                 "If credentials are available and a login form is visible, you ALWAYS log in first. "
                 "Respond with valid JSON only."
-            ),
-        )
+            )
+
+        response = self._call_openai(prompt, system=system_msg)
         return self._parse_json_response(response)
 
     # ── internals ────────────────────────────────────────────
